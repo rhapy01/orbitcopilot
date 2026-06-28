@@ -1,22 +1,32 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Orbit Copilot API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: chat
+    description: AI Copilot chat
+  - name: wallet
+    description: Wallet and assets
+  - name: portfolio
+    description: Portfolio tracking
+  - name: defi
+    description: DeFi opportunities
+  - name: assets
+    description: Asset discovery
+  - name: transactions
+    description: Transaction history
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +34,219 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /chat/messages:
+    get:
+      operationId: getChatMessages
+      tags: [chat]
+      summary: Get chat history
+      responses:
+        "200":
+          description: List of chat messages
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ChatMessage"
+    post:
+      operationId: sendChatMessage
+      tags: [chat]
+      summary: Send a message to the AI copilot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatMessageInput"
+      responses:
+        "201":
+          description: AI response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatMessage"
+
+  /chat/messages/{id}:
+    delete:
+      operationId: deleteChatMessage
+      tags: [chat]
+      summary: Delete a chat message
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /chat/clear:
+    post:
+      operationId: clearChatHistory
+      tags: [chat]
+      summary: Clear all chat history
+      responses:
+        "200":
+          description: Cleared
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+  /wallet:
+    get:
+      operationId: getWallet
+      tags: [wallet]
+      summary: Get wallet info
+      responses:
+        "200":
+          description: Wallet info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Wallet"
+
+  /wallet/assets:
+    get:
+      operationId: getWalletAssets
+      tags: [wallet]
+      summary: List wallet assets/balances
+      responses:
+        "200":
+          description: List of wallet asset balances
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WalletAsset"
+
+  /wallet/transactions:
+    get:
+      operationId: getTransactions
+      tags: [transactions]
+      summary: Get transaction history
+      responses:
+        "200":
+          description: List of transactions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Transaction"
+
+  /portfolio/summary:
+    get:
+      operationId: getPortfolioSummary
+      tags: [portfolio]
+      summary: Portfolio overview — totals, allocation, performance
+      responses:
+        "200":
+          description: Portfolio summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PortfolioSummary"
+
+  /portfolio/activity:
+    get:
+      operationId: getRecentActivity
+      tags: [portfolio]
+      summary: Recent portfolio activity feed
+      responses:
+        "200":
+          description: Recent activity items
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ActivityItem"
+
+  /defi/opportunities:
+    get:
+      operationId: getDefiOpportunities
+      tags: [defi]
+      summary: List DeFi yield opportunities
+      responses:
+        "200":
+          description: DeFi opportunities
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DefiOpportunity"
+
+  /defi/opportunities/{id}:
+    get:
+      operationId: getDefiOpportunity
+      tags: [defi]
+      summary: Get a DeFi opportunity detail
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: DeFi opportunity detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DefiOpportunity"
+
+  /assets:
+    get:
+      operationId: getAssets
+      tags: [assets]
+      summary: Discover tradeable assets on Stellar
+      responses:
+        "200":
+          description: List of assets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Asset"
+
+  /assets/{code}:
+    get:
+      operationId: getAsset
+      tags: [assets]
+      summary: Get asset detail
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Asset detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Asset"
+
+  /market/overview:
+    get:
+      operationId: getMarketOverview
+      tags: [assets]
+      summary: Market overview — top movers, trending assets
+      responses:
+        "200":
+          description: Market overview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketOverview"
+
 components:
   schemas:
     HealthStatus:
@@ -31,6 +254,250 @@ components:
       properties:
         status:
           type: string
-      required:
-        - status
+      required: [status]
 
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+      required: [success]
+
+    ChatMessage:
+      type: object
+      properties:
+        id:
+          type: integer
+        role:
+          type: string
+          enum: [user, assistant]
+        content:
+          type: string
+        createdAt:
+          type: string
+        metadata:
+          type: ["object", "null"]
+      required: [id, role, content, createdAt]
+
+    ChatMessageInput:
+      type: object
+      properties:
+        content:
+          type: string
+          minLength: 1
+        context:
+          type: ["string", "null"]
+      required: [content]
+
+    Wallet:
+      type: object
+      properties:
+        id:
+          type: integer
+        address:
+          type: string
+        network:
+          type: string
+        totalValueUsd:
+          type: number
+        xlmBalance:
+          type: number
+        isActive:
+          type: boolean
+        createdAt:
+          type: string
+      required: [id, address, network, totalValueUsd, xlmBalance, isActive, createdAt]
+
+    WalletAsset:
+      type: object
+      properties:
+        id:
+          type: integer
+        assetCode:
+          type: string
+        assetIssuer:
+          type: ["string", "null"]
+        balance:
+          type: number
+        valueUsd:
+          type: number
+        priceUsd:
+          type: number
+        change24h:
+          type: number
+        logoUrl:
+          type: ["string", "null"]
+      required: [id, assetCode, balance, valueUsd, priceUsd, change24h]
+
+    Transaction:
+      type: object
+      properties:
+        id:
+          type: integer
+        type:
+          type: string
+          enum: [send, receive, swap, yield, deposit, withdraw]
+        assetCode:
+          type: string
+        amount:
+          type: number
+        valueUsd:
+          type: number
+        status:
+          type: string
+          enum: [pending, completed, failed]
+        counterparty:
+          type: ["string", "null"]
+        description:
+          type: ["string", "null"]
+        hash:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+      required: [id, type, assetCode, amount, valueUsd, status, createdAt]
+
+    PortfolioSummary:
+      type: object
+      properties:
+        totalValueUsd:
+          type: number
+        change24hUsd:
+          type: number
+        change24hPct:
+          type: number
+        change7dPct:
+          type: number
+        totalYieldEarned:
+          type: number
+        activePositions:
+          type: integer
+        allocations:
+          type: array
+          items:
+            $ref: "#/components/schemas/Allocation"
+        performanceHistory:
+          type: array
+          items:
+            $ref: "#/components/schemas/PerformancePoint"
+      required: [totalValueUsd, change24hUsd, change24hPct, change7dPct, totalYieldEarned, activePositions, allocations, performanceHistory]
+
+    Allocation:
+      type: object
+      properties:
+        assetCode:
+          type: string
+        pct:
+          type: number
+        valueUsd:
+          type: number
+        color:
+          type: string
+      required: [assetCode, pct, valueUsd, color]
+
+    PerformancePoint:
+      type: object
+      properties:
+        date:
+          type: string
+        valueUsd:
+          type: number
+      required: [date, valueUsd]
+
+    ActivityItem:
+      type: object
+      properties:
+        id:
+          type: integer
+        type:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        valueUsd:
+          type: ["number", "null"]
+        assetCode:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+      required: [id, type, title, description, createdAt]
+
+    DefiOpportunity:
+      type: object
+      properties:
+        id:
+          type: integer
+        protocol:
+          type: string
+        type:
+          type: string
+          enum: [lending, liquidity, staking, yield_farm]
+        assetCode:
+          type: string
+        apy:
+          type: number
+        tvlUsd:
+          type: number
+        riskLevel:
+          type: string
+          enum: [low, medium, high]
+        description:
+          type: string
+        minDeposit:
+          type: number
+        rewards:
+          type: array
+          items:
+            type: string
+      required: [id, protocol, type, assetCode, apy, tvlUsd, riskLevel, description, minDeposit, rewards]
+
+    Asset:
+      type: object
+      properties:
+        code:
+          type: string
+        name:
+          type: string
+        issuer:
+          type: ["string", "null"]
+        priceUsd:
+          type: number
+        change24h:
+          type: number
+        marketCapUsd:
+          type: number
+        volume24hUsd:
+          type: number
+        logoUrl:
+          type: ["string", "null"]
+        description:
+          type: ["string", "null"]
+        riskLevel:
+          type: string
+          enum: [low, medium, high]
+        isTrusted:
+          type: boolean
+      required: [code, name, priceUsd, change24h, marketCapUsd, volume24hUsd, riskLevel, isTrusted]
+
+    MarketOverview:
+      type: object
+      properties:
+        topGainers:
+          type: array
+          items:
+            $ref: "#/components/schemas/Asset"
+        topLosers:
+          type: array
+          items:
+            $ref: "#/components/schemas/Asset"
+        trending:
+          type: array
+          items:
+            $ref: "#/components/schemas/Asset"
+        totalMarketCapUsd:
+          type: number
+        stellarTvlUsd:
+          type: number
+      required: [topGainers, topLosers, trending, totalMarketCapUsd, stellarTvlUsd]

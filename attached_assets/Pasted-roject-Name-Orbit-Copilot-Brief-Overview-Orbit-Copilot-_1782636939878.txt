@@ -1,0 +1,61 @@
+roject Name
+Orbit Copilot
+Brief Overview
+
+Orbit Copilot is an AI-powered financial copilot built on the Stellar network that transforms how people interact with blockchain finance. Instead of navigating multiple wallets, exchanges, and DeFi applications, users simply describe what they want to achieve in natural language, and Orbit Copilot guides them through the process securely and intelligently.
+
+Whether it is sending money, swapping assets, discovering yield opportunities, or understanding financial risks, Orbit Copilot provides a conversational experience that makes blockchain finance accessible to everyone, from beginners to experienced users.
+
+Examples:
+
+"Send 50 USDC to my friend."
+"Swap 100 USDC to XLM."
+"Find the safest yield opportunities for my portfolio."
+"Explain why I need a trustline."
+"Move my assets onto the network and start earning yield."
+
+The Problem
+
+Despite fast transactions and a growing DeFi ecosystem, many users still face significant barriers when interacting with blockchain finance.
+
+Wallets and DeFi interfaces are often difficult to navigate.
+Concepts such as trustlines and account reserves are confusing to new users.
+Discovering reliable assets and yield opportunities requires technical knowledge.
+Bringing funds on-chain and cashing out can be fragmented and complicated.
+Users often do not understand the risks associated with financial products before interacting with them.
+
+These challenges create friction and limit broader adoption.
+
+Our Solution
+
+Orbit Copilot serves as an intelligent financial assistant that simplifies the entire user journey through conversation.
+
+AI Wallet Assistant
+Conversational payments and transfers.
+Wallet and asset management.
+Transaction explanations before approval.
+Guided onboarding for new users.
+DeFi Copilot
+Portfolio tracking and insights.
+Yield opportunity discovery.
+Risk-aware recommendations.
+Lending and liquidity pool suggestions.
+Intelligent Asset Management
+Explain assets in plain language.
+Warn users about suspicious or risky assets.
+Help users understand fees, expected returns, and risks.
+Ramps Experience
+Guide users when bringing funds on-chain.
+Simplify off-ramp experiences.
+Assist with cross-border payments and asset movement.
+Why Orbit Copilot?
+
+Orbit Copilot is built on a simple idea.
+
+Blockchain finance should feel as natural as having a conversation.
+
+By combining artificial intelligence with Stellar's fast and low-cost infrastructure, Orbit Copilot removes complexity and empowers users to make informed financial decisions with confidence.
+
+Vision
+
+Our vision is to become the AI financial operating layer for blockchain users. A trusted copilot that helps anyone send money, manage assets, discover opportunities, and participate in decentralized finance through simple, natural conversations.
