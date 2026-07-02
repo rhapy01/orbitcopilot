@@ -86,7 +86,7 @@ export default function SettingsPage() {
                 checked={theme === 'system'} 
                 onCheckedChange={(checked) => {
                   if (checked) setTheme('system');
-                  else setTheme('dark');
+                  else setTheme('light');
                 }}
               />
             </div>

@@ -1,6 +1,6 @@
 import React from "react";
 import { Link, useLocation } from "wouter";
-import { MessageSquare, PieChart, WalletCards, Sprout, Search, Settings, Orbit } from "lucide-react";
+import { MessageSquare, PieChart, WalletCards, Sprout, Search, Settings, Orbit, LayoutGrid } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const navItems = [
@@ -8,7 +8,8 @@ const navItems = [
   { href: "/portfolio", label: "Portfolio", icon: PieChart },
   { href: "/wallet", label: "Wallet", icon: WalletCards },
   { href: "/defi", label: "Earn", icon: Sprout },
-  { href: "/assets", label: "Assets", icon: Search },
+  { href: "/assets", label: "Markets", icon: Search },
+  { href: "/platforms", label: "Ecosystem", icon: LayoutGrid },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
@@ -24,7 +25,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <span className="text-xl font-bold bg-orbit-gradient bg-clip-text text-transparent">Orbit</span>
         </div>
         
-        <nav className="flex-1 space-y-2">
+        <nav className="flex-1 space-y-1">
           {navItems.map((item) => {
             const isActive = location === item.href;
             return (
@@ -63,15 +64,15 @@ export function Layout({ children }: { children: React.ReactNode }) {
           const isActive = location === item.href;
           return (
             <Link key={item.href} href={item.href}>
-              <span className="flex flex-col items-center justify-center p-2 cursor-pointer">
+              <span className="flex flex-col items-center justify-center p-1 cursor-pointer">
                 <item.icon
                   className={cn(
-                    "h-5 w-5 mb-1 transition-colors",
+                    "h-5 w-5 mb-0.5 transition-colors",
                     isActive ? "text-primary" : "text-muted-foreground"
                   )}
                 />
                 <span className={cn(
-                  "text-[10px] font-medium transition-colors",
+                  "text-[9px] font-medium transition-colors",
                   isActive ? "text-primary" : "text-muted-foreground"
                 )}>
                   {item.label}
