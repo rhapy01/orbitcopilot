@@ -204,3 +204,24 @@ export interface MarketOverview {
   stellarTvlUsd: number;
 }
 
+export type GetWalletParams = {
+/**
+ * Stellar public key — when provided fetches real mainnet data; omit for demo testnet account
+ */
+publicKey?: string;
+};
+
+export type GetWalletAssetsParams = {
+/**
+ * Stellar public key for mainnet lookup
+ */
+publicKey?: string;
+};
+
+export type GetTransactionsParams = {
+/**
+ * Stellar public key for mainnet lookup
+ */
+publicKey?: string;
+};
+

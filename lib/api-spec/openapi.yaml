@@ -100,6 +100,13 @@ paths:
       operationId: getWallet
       tags: [wallet]
       summary: Get wallet info
+      parameters:
+        - name: publicKey
+          in: query
+          required: false
+          description: Stellar public key — when provided fetches real mainnet data; omit for demo testnet account
+          schema:
+            type: string
       responses:
         "200":
           description: Wallet info
@@ -113,6 +120,13 @@ paths:
       operationId: getWalletAssets
       tags: [wallet]
       summary: List wallet assets/balances
+      parameters:
+        - name: publicKey
+          in: query
+          required: false
+          description: Stellar public key for mainnet lookup
+          schema:
+            type: string
       responses:
         "200":
           description: List of wallet asset balances
@@ -128,6 +142,13 @@ paths:
       operationId: getTransactions
       tags: [transactions]
       summary: Get transaction history
+      parameters:
+        - name: publicKey
+          in: query
+          required: false
+          description: Stellar public key for mainnet lookup
+          schema:
+            type: string
       responses:
         "200":
           description: List of transactions

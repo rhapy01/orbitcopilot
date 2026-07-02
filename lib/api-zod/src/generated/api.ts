@@ -75,6 +75,10 @@ export const ClearChatHistoryResponse = zod.object({
 /**
  * @summary Get wallet info
  */
+export const GetWalletQueryParams = zod.object({
+  "publicKey": zod.coerce.string().optional().describe('Stellar public key — when provided fetches real mainnet data; omit for demo testnet account')
+})
+
 export const GetWalletResponse = zod.object({
   "id": zod.number(),
   "address": zod.string(),
@@ -89,6 +93,10 @@ export const GetWalletResponse = zod.object({
 /**
  * @summary List wallet assets/balances
  */
+export const GetWalletAssetsQueryParams = zod.object({
+  "publicKey": zod.coerce.string().optional().describe('Stellar public key for mainnet lookup')
+})
+
 export const GetWalletAssetsResponseItem = zod.object({
   "id": zod.number(),
   "assetCode": zod.string(),
@@ -105,6 +113,10 @@ export const GetWalletAssetsResponse = zod.array(GetWalletAssetsResponseItem)
 /**
  * @summary Get transaction history
  */
+export const GetTransactionsQueryParams = zod.object({
+  "publicKey": zod.coerce.string().optional().describe('Stellar public key for mainnet lookup')
+})
+
 export const GetTransactionsResponseItem = zod.object({
   "id": zod.number(),
   "type": zod.enum(['send', 'receive', 'swap', 'yield', 'deposit', 'withdraw']),

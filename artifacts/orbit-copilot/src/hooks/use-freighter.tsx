@@ -31,14 +31,23 @@ export function FreighterProvider({ children }: { children: React.ReactNode }) {
     const check = async () => {
       try {
         const freighter = await import("@stellar/freighter-api");
-        const connected = await freighter.isConnected();
+        const connResult = await freighter.isConnected();
+        if (!connResult.isConnected) {
+          setIsInstalled(false);
+          return;
+        }
         setIsInstalled(true);
-        if (connected) {
-          const pk = await freighter.getPublicKey();
-          const net = await freighter.getNetworkDetails();
-          setPublicKey(pk);
-          setNetwork(net.networkPassphrase?.includes("Test") ? "testnet" : "mainnet");
-          setIsConnected(true);
+
+        // Already allowed — get address silently
+        const isAllowedResult = await freighter.isAllowed();
+        if (isAllowedResult.isAllowed) {
+          const addrResult = await freighter.getAddress();
+          if (!addrResult.error && addrResult.address) {
+            const netResult = await freighter.getNetworkDetails();
+            setPublicKey(addrResult.address);
+            setNetwork(netResult.networkPassphrase?.includes("Test") ? "Testnet" : "Mainnet");
+            setIsConnected(true);
+          }
         }
       } catch {
         setIsInstalled(false);
@@ -51,10 +60,16 @@ export function FreighterProvider({ children }: { children: React.ReactNode }) {
     setConnecting(true);
     try {
       const freighter = await import("@stellar/freighter-api");
-      const pk = await freighter.getPublicKey();
-      const net = await freighter.getNetworkDetails();
-      setPublicKey(pk);
-      setNetwork(net.networkPassphrase?.includes("Test") ? "testnet" : "mainnet");
+      setIsInstalled(true);
+      const accessResult = await freighter.requestAccess();
+      if (accessResult.error) throw new Error(accessResult.error.message);
+
+      const addrResult = await freighter.getAddress();
+      if (addrResult.error) throw new Error(addrResult.error.message);
+
+      const netResult = await freighter.getNetworkDetails();
+      setPublicKey(addrResult.address);
+      setNetwork(netResult.networkPassphrase?.includes("Test") ? "Testnet" : "Mainnet");
       setIsConnected(true);
     } catch (err) {
       console.error("Freighter connect error:", err);

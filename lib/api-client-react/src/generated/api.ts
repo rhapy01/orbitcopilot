@@ -25,6 +25,9 @@ import type {
   ChatMessage,
   ChatMessageInput,
   DefiOpportunity,
+  GetTransactionsParams,
+  GetWalletAssetsParams,
+  GetWalletParams,
   HealthStatus,
   MarketOverview,
   PortfolioSummary,
@@ -425,20 +428,27 @@ export const useClearChatHistory = <TError = ErrorType<unknown>,
       return useMutation(getClearChatHistoryMutationOptions(options));
     }
 
-export const getGetWalletUrl = () => {
+export const getGetWalletUrl = (params?: GetWalletParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/wallet`
+  return stringifiedParams.length > 0 ? `/api/wallet?${stringifiedParams}` : `/api/wallet`
 }
 
 /**
  * @summary Get wallet info
  */
-export const getWallet = async ( options?: RequestInit): Promise<Wallet> => {
+export const getWallet = async (params?: GetWalletParams, options?: RequestInit): Promise<Wallet> => {
 
-  return customFetch<Wallet>(getGetWalletUrl(),
+  return customFetch<Wallet>(getGetWalletUrl(params),
   {
     ...options,
     method: 'GET'
@@ -451,23 +461,23 @@ export const getWallet = async ( options?: RequestInit): Promise<Wallet> => {
 
 
 
-export const getGetWalletQueryKey = () => {
+export const getGetWalletQueryKey = (params?: GetWalletParams,) => {
     return [
-    `/api/wallet`
+    `/api/wallet`, ...(params ? [params] : [])
     ] as const;
     }
 
 
-export const getGetWalletQueryOptions = <TData = Awaited<ReturnType<typeof getWallet>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getWallet>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getGetWalletQueryOptions = <TData = Awaited<ReturnType<typeof getWallet>>, TError = ErrorType<unknown>>(params?: GetWalletParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getWallet>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetWalletQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getGetWalletQueryKey(params);
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getWallet>>> = ({ signal }) => getWallet({ signal, ...requestOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getWallet>>> = ({ signal }) => getWallet(params, { signal, ...requestOptions });
 
 
 
@@ -485,11 +495,11 @@ export type GetWalletQueryError = ErrorType<unknown>
  */
 
 export function useGetWallet<TData = Awaited<ReturnType<typeof getWallet>>, TError = ErrorType<unknown>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getWallet>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+ params?: GetWalletParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getWallet>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
-  const queryOptions = getGetWalletQueryOptions(options)
+  const queryOptions = getGetWalletQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
@@ -502,20 +512,27 @@ export function useGetWallet<TData = Awaited<ReturnType<typeof getWallet>>, TErr
 
 
 
-export const getGetWalletAssetsUrl = () => {
+export const getGetWalletAssetsUrl = (params?: GetWalletAssetsParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/wallet/assets`
+  return stringifiedParams.length > 0 ? `/api/wallet/assets?${stringifiedParams}` : `/api/wallet/assets`
 }
 
 /**
  * @summary List wallet assets/balances
  */
-export const getWalletAssets = async ( options?: RequestInit): Promise<WalletAsset[]> => {
+export const getWalletAssets = async (params?: GetWalletAssetsParams, options?: RequestInit): Promise<WalletAsset[]> => {
 
-  return customFetch<WalletAsset[]>(getGetWalletAssetsUrl(),
+  return customFetch<WalletAsset[]>(getGetWalletAssetsUrl(params),
   {
     ...options,
     method: 'GET'
@@ -528,23 +545,23 @@ export const getWalletAssets = async ( options?: RequestInit): Promise<WalletAss
 
 
 
-export const getGetWalletAssetsQueryKey = () => {
+export const getGetWalletAssetsQueryKey = (params?: GetWalletAssetsParams,) => {
     return [
-    `/api/wallet/assets`
+    `/api/wallet/assets`, ...(params ? [params] : [])
     ] as const;
     }
 
 
-export const getGetWalletAssetsQueryOptions = <TData = Awaited<ReturnType<typeof getWalletAssets>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getWalletAssets>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getGetWalletAssetsQueryOptions = <TData = Awaited<ReturnType<typeof getWalletAssets>>, TError = ErrorType<unknown>>(params?: GetWalletAssetsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getWalletAssets>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetWalletAssetsQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getGetWalletAssetsQueryKey(params);
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getWalletAssets>>> = ({ signal }) => getWalletAssets({ signal, ...requestOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getWalletAssets>>> = ({ signal }) => getWalletAssets(params, { signal, ...requestOptions });
 
 
 
@@ -562,11 +579,11 @@ export type GetWalletAssetsQueryError = ErrorType<unknown>
  */
 
 export function useGetWalletAssets<TData = Awaited<ReturnType<typeof getWalletAssets>>, TError = ErrorType<unknown>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getWalletAssets>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+ params?: GetWalletAssetsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getWalletAssets>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
-  const queryOptions = getGetWalletAssetsQueryOptions(options)
+  const queryOptions = getGetWalletAssetsQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
@@ -579,20 +596,27 @@ export function useGetWalletAssets<TData = Awaited<ReturnType<typeof getWalletAs
 
 
 
-export const getGetTransactionsUrl = () => {
+export const getGetTransactionsUrl = (params?: GetTransactionsParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/wallet/transactions`
+  return stringifiedParams.length > 0 ? `/api/wallet/transactions?${stringifiedParams}` : `/api/wallet/transactions`
 }
 
 /**
  * @summary Get transaction history
  */
-export const getTransactions = async ( options?: RequestInit): Promise<Transaction[]> => {
+export const getTransactions = async (params?: GetTransactionsParams, options?: RequestInit): Promise<Transaction[]> => {
 
-  return customFetch<Transaction[]>(getGetTransactionsUrl(),
+  return customFetch<Transaction[]>(getGetTransactionsUrl(params),
   {
     ...options,
     method: 'GET'
@@ -605,23 +629,23 @@ export const getTransactions = async ( options?: RequestInit): Promise<Transacti
 
 
 
-export const getGetTransactionsQueryKey = () => {
+export const getGetTransactionsQueryKey = (params?: GetTransactionsParams,) => {
     return [
-    `/api/wallet/transactions`
+    `/api/wallet/transactions`, ...(params ? [params] : [])
     ] as const;
     }
 
 
-export const getGetTransactionsQueryOptions = <TData = Awaited<ReturnType<typeof getTransactions>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTransactions>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getGetTransactionsQueryOptions = <TData = Awaited<ReturnType<typeof getTransactions>>, TError = ErrorType<unknown>>(params?: GetTransactionsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTransactions>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetTransactionsQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getGetTransactionsQueryKey(params);
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTransactions>>> = ({ signal }) => getTransactions({ signal, ...requestOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTransactions>>> = ({ signal }) => getTransactions(params, { signal, ...requestOptions });
 
 
 
@@ -639,11 +663,11 @@ export type GetTransactionsQueryError = ErrorType<unknown>
  */
 
 export function useGetTransactions<TData = Awaited<ReturnType<typeof getTransactions>>, TError = ErrorType<unknown>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTransactions>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+ params?: GetTransactionsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTransactions>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
-  const queryOptions = getGetTransactionsQueryOptions(options)
+  const queryOptions = getGetTransactionsQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

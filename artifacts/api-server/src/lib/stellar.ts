@@ -64,10 +64,20 @@ export interface StellarBalance {
   logoUrl: string | null;
 }
 
+// Testnet balances (demo account)
 export async function getAccountBalances(publicKey: string): Promise<StellarBalance[]> {
   const account = await horizonTestnet.loadAccount(publicKey);
+  return _parseBalances(account.balances);
+}
 
-  return account.balances.map((b: any) => {
+// Mainnet balances (real Freighter wallet)
+export async function getMainnetAccountBalances(publicKey: string): Promise<StellarBalance[]> {
+  const account = await horizonMainnet.loadAccount(publicKey);
+  return _parseBalances(account.balances);
+}
+
+function _parseBalances(balances: any[]): StellarBalance[] {
+  return balances.map((b: any) => {
     if (b.asset_type === "native") {
       return {
         assetCode: "XLM",
@@ -93,9 +103,14 @@ export interface StellarOperation {
   asset_type?: string;
   from?: string;
   to?: string;
+  starting_balance?: string;
+  selling_asset_code?: string;
+  buying_asset_code?: string;
+  transaction_hash?: string;
   created_at: string;
 }
 
+// Testnet operations (demo)
 export async function getAccountOperations(publicKey: string): Promise<StellarOperation[]> {
   const ops = await horizonTestnet
     .operations()
@@ -103,7 +118,17 @@ export async function getAccountOperations(publicKey: string): Promise<StellarOp
     .order("desc")
     .limit(20)
     .call();
+  return ops.records as any[];
+}
 
+// Mainnet operations (real wallet)
+export async function getMainnetAccountOperations(publicKey: string): Promise<StellarOperation[]> {
+  const ops = await horizonMainnet
+    .operations()
+    .forAccount(publicKey)
+    .order("desc")
+    .limit(25)
+    .call();
   return ops.records as any[];
 }
 
@@ -126,7 +151,6 @@ export async function getXlmPriceUsd(): Promise<number> {
 // Fetch real Stellar mainnet assets with price data via StellarExpert
 export async function getPopularStellarAssets(): Promise<any[]> {
   try {
-    // Use stellar.expert's public API - free, no auth required
     const resp = await fetch(
       "https://api.stellar.expert/explorer/mainnet/asset?order=desc&sort=volume7d&limit=20"
     );
@@ -148,7 +172,6 @@ export async function getAssetPrice(code: string, issuer?: string): Promise<numb
       `https://api.stellar.expert/explorer/mainnet/asset/${code}${issuerPart}/price`
     );
     const data: any = await resp.json();
-    // price is in XLM — convert to USD
     const xlmPrice = await getXlmPriceUsd();
     return (data.price ?? 0) * xlmPrice;
   } catch {
