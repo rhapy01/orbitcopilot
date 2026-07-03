@@ -22,6 +22,8 @@ import type {
 import type {
   ActivityItem,
   Asset,
+  BuildTransactionInput,
+  BuildTransactionResult,
   ChatMessage,
   ChatMessageInput,
   DefiOpportunity,
@@ -31,6 +33,8 @@ import type {
   HealthStatus,
   MarketOverview,
   PortfolioSummary,
+  SubmitTransactionInput,
+  SubmitTransactionResult,
   SuccessResponse,
   Transaction,
   Wallet,
@@ -679,6 +683,146 @@ export function useGetTransactions<TData = Awaited<ReturnType<typeof getTransact
 
 
 
+
+export const getBuildTransactionUrl = () => {
+
+
+
+
+  return `/api/wallet/build-transaction`
+}
+
+/**
+ * @summary Build an unsigned Stellar transaction (payment or swap) for Freighter to sign
+ */
+export const buildTransaction = async (buildTransactionInput: BuildTransactionInput, options?: RequestInit): Promise<BuildTransactionResult> => {
+
+  return customFetch<BuildTransactionResult>(getBuildTransactionUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(buildTransactionInput)
+  }
+);}
+
+
+
+
+export const getBuildTransactionMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof buildTransaction>>, TError,{data: BodyType<BuildTransactionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof buildTransaction>>, TError,{data: BodyType<BuildTransactionInput>}, TContext> => {
+
+const mutationKey = ['buildTransaction'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof buildTransaction>>, {data: BodyType<BuildTransactionInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  buildTransaction(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type BuildTransactionMutationResult = NonNullable<Awaited<ReturnType<typeof buildTransaction>>>
+    export type BuildTransactionMutationBody = BodyType<BuildTransactionInput>
+    export type BuildTransactionMutationError = ErrorType<void>
+
+    /**
+ * @summary Build an unsigned Stellar transaction (payment or swap) for Freighter to sign
+ */
+export const useBuildTransaction = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof buildTransaction>>, TError,{data: BodyType<BuildTransactionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof buildTransaction>>,
+        TError,
+        {data: BodyType<BuildTransactionInput>},
+        TContext
+      > => {
+      return useMutation(getBuildTransactionMutationOptions(options));
+    }
+
+export const getSubmitTransactionUrl = () => {
+
+
+
+
+  return `/api/wallet/submit-transaction`
+}
+
+/**
+ * @summary Submit a Freighter-signed transaction to the Stellar network
+ */
+export const submitTransaction = async (submitTransactionInput: SubmitTransactionInput, options?: RequestInit): Promise<SubmitTransactionResult> => {
+
+  return customFetch<SubmitTransactionResult>(getSubmitTransactionUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(submitTransactionInput)
+  }
+);}
+
+
+
+
+export const getSubmitTransactionMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitTransaction>>, TError,{data: BodyType<SubmitTransactionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof submitTransaction>>, TError,{data: BodyType<SubmitTransactionInput>}, TContext> => {
+
+const mutationKey = ['submitTransaction'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof submitTransaction>>, {data: BodyType<SubmitTransactionInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  submitTransaction(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SubmitTransactionMutationResult = NonNullable<Awaited<ReturnType<typeof submitTransaction>>>
+    export type SubmitTransactionMutationBody = BodyType<SubmitTransactionInput>
+    export type SubmitTransactionMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Submit a Freighter-signed transaction to the Stellar network
+ */
+export const useSubmitTransaction = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitTransaction>>, TError,{data: BodyType<SubmitTransactionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof submitTransaction>>,
+        TError,
+        {data: BodyType<SubmitTransactionInput>},
+        TContext
+      > => {
+      return useMutation(getSubmitTransactionMutationOptions(options));
+    }
 
 export const getGetPortfolioSummaryUrl = () => {
 

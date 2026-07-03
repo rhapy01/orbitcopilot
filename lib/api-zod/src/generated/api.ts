@@ -133,6 +133,41 @@ export const GetTransactionsResponse = zod.array(GetTransactionsResponseItem)
 
 
 /**
+ * @summary Build an unsigned Stellar transaction (payment or swap) for Freighter to sign
+ */
+export const BuildTransactionBody = zod.object({
+  "type": zod.enum(['send', 'swap']),
+  "sourcePublicKey": zod.string(),
+  "sendAsset": zod.string(),
+  "sendAmount": zod.string(),
+  "destination": zod.string().nullish().describe('Required for type=send'),
+  "destAsset": zod.string().nullish().describe('Required for type=swap')
+})
+
+export const BuildTransactionResponse = zod.object({
+  "xdr": zod.string(),
+  "networkPassphrase": zod.string(),
+  "estimatedDestAmount": zod.string().nullish(),
+  "destMin": zod.string().nullish()
+})
+
+
+/**
+ * @summary Submit a Freighter-signed transaction to the Stellar network
+ */
+export const SubmitTransactionBody = zod.object({
+  "signedXdr": zod.string(),
+  "networkPassphrase": zod.string()
+})
+
+export const SubmitTransactionResponse = zod.object({
+  "success": zod.boolean(),
+  "hash": zod.string().nullish(),
+  "error": zod.string().nullish()
+})
+
+
+/**
  * @summary Portfolio overview — totals, allocation, performance
  */
 export const GetPortfolioSummaryResponse = zod.object({

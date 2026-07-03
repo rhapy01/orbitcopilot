@@ -28,27 +28,85 @@ const AI_RESPONSES: Record<string, string> = {
     "Risk assessment is important in DeFi. I evaluate opportunities based on protocol security audits, TVL stability, smart contract risk, and historical volatility. Low-risk options include established lending protocols. Higher APY usually means higher risk. I always explain the risks before recommending anything.",
 };
 
-function getAiResponse(content: string): string {
+const SEND_INTENT_RE =
+  /\b(?:send|transfer|pay)\s+([\d.]+)\s*([a-zA-Z]{2,12})\s+to\s+(G[A-Z2-7]{55})\b/i;
+const SWAP_INTENT_RE =
+  /\b(?:swap|exchange|convert)\s+([\d.]+)\s*([a-zA-Z]{2,12})\s+(?:to|for|into)\s+([a-zA-Z]{2,12})\b/i;
+
+const SUPPORTED_ASSETS = ["XLM", "USDC", "AQUA", "yXLM", "EURC"];
+
+interface ChatAction {
+  type: "send" | "swap";
+  sendAmount: string;
+  sendAsset: string;
+  destination?: string;
+  destAsset?: string;
+}
+
+function parseIntentAction(content: string): ChatAction | null {
+  const sendMatch = content.match(SEND_INTENT_RE);
+  if (sendMatch) {
+    const [, amount, asset, destination] = sendMatch;
+    return { type: "send", sendAmount: amount, sendAsset: asset.toUpperCase(), destination };
+  }
+
+  const swapMatch = content.match(SWAP_INTENT_RE);
+  if (swapMatch) {
+    const [, amount, fromAsset, toAsset] = swapMatch;
+    return {
+      type: "swap",
+      sendAmount: amount,
+      sendAsset: fromAsset.toUpperCase(),
+      destAsset: toAsset.toUpperCase(),
+    };
+  }
+
+  return null;
+}
+
+function getAiResponse(content: string): { text: string; action: ChatAction | null } {
   const lower = content.toLowerCase();
+  const action = parseIntentAction(content);
+
+  if (action?.type === "send") {
+    return {
+      text: `I've prepared a transaction to send ${action.sendAmount} ${action.sendAsset} to ${action.destination}. Review the details below and sign with Freighter to broadcast it on-chain.`,
+      action,
+    };
+  }
+
+  if (action?.type === "swap") {
+    if (!SUPPORTED_ASSETS.includes(action.sendAsset) || !SUPPORTED_ASSETS.includes(action.destAsset!)) {
+      return {
+        text: `I can swap between these assets right now: ${SUPPORTED_ASSETS.join(", ")}. Try something like "Swap 50 XLM to USDC".`,
+        action: null,
+      };
+    }
+    return {
+      text: `I found a route on the Stellar DEX to swap ${action.sendAmount} ${action.sendAsset} for ${action.destAsset}. Review the quote below and sign with Freighter to execute the swap.`,
+      action,
+    };
+  }
+
   if (lower.includes("send") || lower.includes("transfer") || lower.includes("payment")) {
-    return AI_RESPONSES.send;
+    return { text: AI_RESPONSES.send, action: null };
   }
   if (lower.includes("swap") || lower.includes("exchange") || lower.includes("convert")) {
-    return AI_RESPONSES.swap;
+    return { text: AI_RESPONSES.swap, action: null };
   }
   if (lower.includes("yield") || lower.includes("earn") || lower.includes("apy") || lower.includes("interest")) {
-    return AI_RESPONSES.yield;
+    return { text: AI_RESPONSES.yield, action: null };
   }
   if (lower.includes("trustline") || lower.includes("trust line")) {
-    return AI_RESPONSES.trustline;
+    return { text: AI_RESPONSES.trustline, action: null };
   }
   if (lower.includes("portfolio") || lower.includes("balance") || lower.includes("holdings")) {
-    return AI_RESPONSES.portfolio;
+    return { text: AI_RESPONSES.portfolio, action: null };
   }
   if (lower.includes("risk") || lower.includes("safe") || lower.includes("danger")) {
-    return AI_RESPONSES.risk;
+    return { text: AI_RESPONSES.risk, action: null };
   }
-  return AI_RESPONSES.default;
+  return { text: AI_RESPONSES.default, action: null };
 }
 
 router.get("/chat/messages", async (req, res): Promise<void> => {
@@ -75,14 +133,14 @@ router.post("/chat/messages", async (req, res): Promise<void> => {
     metadata: null,
   });
 
-  const aiContent = getAiResponse(parsed.data.content);
+  const { text: aiContent, action } = getAiResponse(parsed.data.content);
 
   const [aiMessage] = await db
     .insert(chatMessagesTable)
     .values({
       role: "assistant",
       content: aiContent,
-      metadata: null,
+      metadata: action ? { action } : null,
     })
     .returning();
 

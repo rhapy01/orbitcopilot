@@ -7,11 +7,17 @@ import {
   getMainnetAccountOperations,
   getXlmPriceUsd,
   getAssetPrice,
+  buildTransaction,
+  submitSignedTransaction,
 } from "../lib/stellar";
 import {
   GetWalletResponse,
   GetWalletAssetsResponse,
   GetTransactionsResponse,
+  BuildTransactionBody,
+  BuildTransactionResponse,
+  SubmitTransactionBody,
+  SubmitTransactionResponse,
 } from "@workspace/api-zod";
 
 const router: IRouter = Router();
@@ -164,6 +170,33 @@ router.get("/wallet/transactions", async (req, res): Promise<void> => {
     req.log.error({ err }, "Failed to fetch transactions from Stellar");
     res.status(500).json({ error: "Failed to fetch transactions from Stellar network" });
   }
+});
+
+router.post("/wallet/build-transaction", async (req, res): Promise<void> => {
+  const parsed = BuildTransactionBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+
+  try {
+    const result = await buildTransaction(parsed.data);
+    res.json(BuildTransactionResponse.parse(result));
+  } catch (err: any) {
+    req.log.error({ err }, "Failed to build transaction");
+    res.status(400).json({ error: err?.message ?? "Failed to build transaction" });
+  }
+});
+
+router.post("/wallet/submit-transaction", async (req, res): Promise<void> => {
+  const parsed = SubmitTransactionBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+
+  const result = await submitSignedTransaction(parsed.data.signedXdr, parsed.data.networkPassphrase);
+  res.json(SubmitTransactionResponse.parse(result));
 });
 
 export default router;

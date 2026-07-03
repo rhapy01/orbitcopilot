@@ -159,6 +159,46 @@ paths:
                 items:
                   $ref: "#/components/schemas/Transaction"
 
+  /wallet/build-transaction:
+    post:
+      operationId: buildTransaction
+      tags: [wallet]
+      summary: Build an unsigned Stellar transaction (payment or swap) for Freighter to sign
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BuildTransactionInput"
+      responses:
+        "200":
+          description: Unsigned transaction XDR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BuildTransactionResult"
+        "400":
+          description: Invalid transaction request
+
+  /wallet/submit-transaction:
+    post:
+      operationId: submitTransaction
+      tags: [wallet]
+      summary: Submit a Freighter-signed transaction to the Stellar network
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubmitTransactionInput"
+      responses:
+        "200":
+          description: Submission result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubmitTransactionResult"
+
   /portfolio/summary:
     get:
       operationId: getPortfolioSummary
@@ -378,6 +418,59 @@ components:
         createdAt:
           type: string
       required: [id, type, assetCode, amount, valueUsd, status, createdAt]
+
+    BuildTransactionInput:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [send, swap]
+        sourcePublicKey:
+          type: string
+        sendAsset:
+          type: string
+        sendAmount:
+          type: string
+        destination:
+          type: ["string", "null"]
+          description: Required for type=send
+        destAsset:
+          type: ["string", "null"]
+          description: Required for type=swap
+      required: [type, sourcePublicKey, sendAsset, sendAmount]
+
+    BuildTransactionResult:
+      type: object
+      properties:
+        xdr:
+          type: string
+        networkPassphrase:
+          type: string
+        estimatedDestAmount:
+          type: ["string", "null"]
+        destMin:
+          type: ["string", "null"]
+      required: [xdr, networkPassphrase]
+
+    SubmitTransactionInput:
+      type: object
+      properties:
+        signedXdr:
+          type: string
+        networkPassphrase:
+          type: string
+      required: [signedXdr, networkPassphrase]
+
+    SubmitTransactionResult:
+      type: object
+      properties:
+        success:
+          type: boolean
+        hash:
+          type: ["string", "null"]
+        error:
+          type: ["string", "null"]
+      required: [success]
 
     PortfolioSummary:
       type: object

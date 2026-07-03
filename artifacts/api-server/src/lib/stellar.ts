@@ -178,3 +178,136 @@ export async function getAssetPrice(code: string, issuer?: string): Promise<numb
     return 0;
   }
 }
+
+// Well-known mainnet assets we support for chat-driven send/swap. Keeps
+// transaction building unambiguous instead of guessing issuers.
+export const KNOWN_MAINNET_ASSETS: Record<string, string | null> = {
+  XLM: null,
+  USDC: MAINNET_USDC_ISSUER,
+  AQUA: "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
+  yXLM: "GDGTVWSM4MGS4T7Z6W4RPWOCHE2I6RDFCIFZGKACYPEGGXV3ADRAO7D2",
+  EURC: "GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2",
+};
+
+export function resolveKnownAsset(codeRaw: string): Asset | null {
+  const code = Object.keys(KNOWN_MAINNET_ASSETS).find(
+    (k) => k.toLowerCase() === codeRaw.toLowerCase()
+  );
+  if (!code) return null;
+  const issuer = KNOWN_MAINNET_ASSETS[code];
+  return issuer ? new Asset(code, issuer) : Asset.native();
+}
+
+export interface BuildTxParams {
+  type: "send" | "swap";
+  sourcePublicKey: string;
+  sendAsset: string;
+  sendAmount: string;
+  destination?: string | null;
+  destAsset?: string | null;
+}
+
+export interface BuildTxResult {
+  xdr: string;
+  networkPassphrase: string;
+  estimatedDestAmount: string | null;
+  destMin: string | null;
+}
+
+// Builds an unsigned mainnet transaction for Freighter to sign: either a
+// simple payment ("send") or a Stellar DEX path-payment swap ("swap").
+// Path payments are the same primitive that Aquarius/StellarX/Phoenix
+// front-ends use under the hood for classic-asset swaps, so this executes
+// real swaps against live SDEX liquidity without depending on any
+// third-party API.
+export async function buildTransaction(params: BuildTxParams): Promise<BuildTxResult> {
+  const { TransactionBuilder, Networks, Operation, BASE_FEE } = await import("@stellar/stellar-sdk");
+
+  const sendAsset = resolveKnownAsset(params.sendAsset);
+  if (!sendAsset) {
+    throw new Error(
+      `Unsupported asset "${params.sendAsset}". Supported: ${Object.keys(KNOWN_MAINNET_ASSETS).join(", ")}`
+    );
+  }
+
+  const account = await horizonMainnet.loadAccount(params.sourcePublicKey);
+  const builder = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: Networks.PUBLIC,
+  });
+
+  let estimatedDestAmount: string | null = null;
+  let destMin: string | null = null;
+
+  if (params.type === "send") {
+    if (!params.destination) throw new Error("destination is required for a send transaction");
+    if (!/^G[A-Z0-9]{55}$/.test(params.destination)) {
+      throw new Error("destination is not a valid Stellar address");
+    }
+    builder.addOperation(
+      Operation.payment({
+        destination: params.destination,
+        asset: sendAsset,
+        amount: params.sendAmount,
+      })
+    );
+  } else {
+    if (!params.destAsset) throw new Error("destAsset is required for a swap transaction");
+    const destAsset = resolveKnownAsset(params.destAsset);
+    if (!destAsset) {
+      throw new Error(
+        `Unsupported asset "${params.destAsset}". Supported: ${Object.keys(KNOWN_MAINNET_ASSETS).join(", ")}`
+      );
+    }
+
+    const paths = await horizonMainnet
+      .strictSendPaths(sendAsset, params.sendAmount, [destAsset])
+      .call();
+    const best = paths.records.sort(
+      (a, b) => parseFloat(b.destination_amount) - parseFloat(a.destination_amount)
+    )[0];
+    if (!best) {
+      throw new Error("No liquidity path found on the Stellar DEX for this swap right now");
+    }
+
+    estimatedDestAmount = best.destination_amount;
+    destMin = (parseFloat(best.destination_amount) * 0.99).toFixed(7); // 1% slippage tolerance
+
+    builder.addOperation(
+      Operation.pathPaymentStrictSend({
+        sendAsset,
+        sendAmount: params.sendAmount,
+        destination: params.sourcePublicKey,
+        destAsset,
+        destMin,
+        path: best.path as any,
+      })
+    );
+  }
+
+  const tx = builder.setTimeout(120).build();
+
+  return {
+    xdr: tx.toXDR(),
+    networkPassphrase: Networks.PUBLIC,
+    estimatedDestAmount,
+    destMin,
+  };
+}
+
+export async function submitSignedTransaction(
+  signedXdr: string,
+  networkPassphrase: string
+): Promise<{ success: boolean; hash: string | null; error: string | null }> {
+  const { TransactionBuilder } = await import("@stellar/stellar-sdk");
+  try {
+    const tx = TransactionBuilder.fromXDR(signedXdr, networkPassphrase);
+    const result = await horizonMainnet.submitTransaction(tx as any);
+    return { success: true, hash: result.hash, error: null };
+  } catch (err: any) {
+    const extras = err?.response?.data?.extras?.result_codes;
+    const message = extras ? JSON.stringify(extras) : err?.message ?? "Transaction submission failed";
+    logger.error({ err: message }, "Transaction submission failed");
+    return { success: false, hash: null, error: message };
+  }
+}

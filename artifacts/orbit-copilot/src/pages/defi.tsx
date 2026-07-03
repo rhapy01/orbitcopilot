@@ -7,6 +7,18 @@ import { Button } from "@/components/ui/button";
 import { Sprout, ShieldAlert, ArrowRight, TrendingUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+const PROTOCOL_URLS: Record<string, string> = {
+  "Blend Protocol": "https://blend.capital",
+  Aquarius: "https://aqua.network",
+  "Phoenix Protocol": "https://phoenix-hub.io",
+  StellarX: "https://stellarx.com",
+  "Ultra Stellar": "https://ultrastellar.com",
+};
+
+function protocolUrl(protocol: string): string {
+  return PROTOCOL_URLS[protocol] ?? `https://stellar.expert/explorer/public/search?term=${encodeURIComponent(protocol)}`;
+}
+
 export default function DefiPage() {
   const { data: opps = [], isLoading } = useGetDefiOpportunities();
   const [filter, setFilter] = useState<string>("all");
@@ -114,8 +126,11 @@ export default function DefiPage() {
                 </div>
               </CardContent>
               <CardFooter className="pt-0">
-                <Button className="w-full group-hover:bg-orbit-gradient group-hover:text-white transition-all border-0 shadow-none bg-secondary text-secondary-foreground">
-                  Deposit
+                <Button
+                  onClick={() => window.open(protocolUrl(opp.protocol), "_blank")}
+                  className="w-full group-hover:bg-orbit-gradient group-hover:text-white transition-all border-0 shadow-none bg-secondary text-secondary-foreground"
+                >
+                  Deposit on {opp.protocol}
                   <ArrowRight className="w-4 h-4 ml-2" />
                 </Button>
               </CardFooter>

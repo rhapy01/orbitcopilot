@@ -103,6 +103,53 @@ export interface Transaction {
   createdAt: string;
 }
 
+export type BuildTransactionInputType = typeof BuildTransactionInputType[keyof typeof BuildTransactionInputType];
+
+
+export const BuildTransactionInputType = {
+  send: 'send',
+  swap: 'swap',
+} as const;
+
+export interface BuildTransactionInput {
+  type: BuildTransactionInputType;
+  sourcePublicKey: string;
+  sendAsset: string;
+  sendAmount: string;
+  /**
+     * Required for type=send
+     * @nullable
+     */
+  destination?: string | null;
+  /**
+     * Required for type=swap
+     * @nullable
+     */
+  destAsset?: string | null;
+}
+
+export interface BuildTransactionResult {
+  xdr: string;
+  networkPassphrase: string;
+  /** @nullable */
+  estimatedDestAmount?: string | null;
+  /** @nullable */
+  destMin?: string | null;
+}
+
+export interface SubmitTransactionInput {
+  signedXdr: string;
+  networkPassphrase: string;
+}
+
+export interface SubmitTransactionResult {
+  success: boolean;
+  /** @nullable */
+  hash?: string | null;
+  /** @nullable */
+  error?: string | null;
+}
+
 export interface Allocation {
   assetCode: string;
   pct: number;

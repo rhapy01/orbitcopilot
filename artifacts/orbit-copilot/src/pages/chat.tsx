@@ -11,10 +11,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
+import { TransactionActionCard, type ChatAction } from "@/components/transaction-action-card";
 import { cn } from "@/lib/utils";
 
 const SUGGESTED_PROMPTS = [
-  "Send 50 USDC to Bob",
+  "Send 10 XLM to GAG4ATX6SCHX2RJGEHF7CFH3Q22T2HZVUCD4LPF3A4LTDCTVPGIS6AFU",
   "Find yield opportunities for XLM",
   "Swap 100 XLM to USDC",
   "Explain Stellar trustlines"
@@ -94,26 +95,30 @@ export default function ChatPage() {
           </div>
         ) : (
           <div className="space-y-6 max-w-3xl mx-auto w-full pb-4">
-            {messages.map((msg) => (
-              <div
-                key={msg.id}
-                className={cn(
-                  "flex w-full",
-                  msg.role === "user" ? "justify-end" : "justify-start"
-                )}
-              >
+            {messages.map((msg) => {
+              const action = (msg.metadata as { action?: ChatAction } | null)?.action ?? null;
+              return (
                 <div
+                  key={msg.id}
                   className={cn(
-                    "px-4 py-3 rounded-2xl max-w-[85%] sm:max-w-[75%]",
-                    msg.role === "user" 
-                      ? "bg-orbit-gradient text-white rounded-tr-sm shadow-md" 
-                      : "bg-card border shadow-sm rounded-tl-sm text-card-foreground"
+                    "flex w-full flex-col",
+                    msg.role === "user" ? "items-end" : "items-start"
                   )}
                 >
-                  {msg.content}
+                  <div
+                    className={cn(
+                      "px-4 py-3 rounded-2xl max-w-[85%] sm:max-w-[75%]",
+                      msg.role === "user"
+                        ? "bg-orbit-gradient text-white rounded-tr-sm shadow-md"
+                        : "bg-card border shadow-sm rounded-tl-sm text-card-foreground"
+                    )}
+                  >
+                    {msg.content}
+                  </div>
+                  {action && <TransactionActionCard action={action} />}
                 </div>
-              </div>
-            ))}
+              );
+            })}
             
             {sendMutation.isPending && (
               <div className="flex w-full justify-start">
