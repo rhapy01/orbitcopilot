@@ -4,13 +4,82 @@ import {
   GetPortfolioSummaryResponse,
   GetRecentActivityResponse,
 } from "@workspace/api-zod";
+import {
+  buildPortfolioIntel,
+  formatEarningReport,
+  formatRebalancePlan,
+  getUnifiedPortfolioJson,
+} from "../lib/portfolio";
 
 const router: IRouter = Router();
 
+router.get("/portfolio/unified", async (req, res): Promise<void> => {
+  const publicKey =
+    typeof req.query.publicKey === "string" ? req.query.publicKey.trim() : "";
+  if (!publicKey) {
+    res.status(400).json({ error: "publicKey query parameter is required" });
+    return;
+  }
+  try {
+    const data = await getUnifiedPortfolioJson(publicKey);
+    res.json(data);
+  } catch (err: any) {
+    req.log.error({ err }, "Unified portfolio failed");
+    res.status(500).json({ error: err?.message ?? "Failed to build portfolio" });
+  }
+});
+
+router.get("/portfolio/intel", async (req, res): Promise<void> => {
+  const publicKey =
+    typeof req.query.publicKey === "string" ? req.query.publicKey.trim() : "";
+  if (!publicKey) {
+    res.status(400).json({ error: "publicKey query parameter is required" });
+    return;
+  }
+  try {
+    const intel = await buildPortfolioIntel(publicKey);
+    res.json(intel);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? "Failed to build portfolio intel" });
+  }
+});
+
+router.get("/portfolio/earning", async (req, res): Promise<void> => {
+  const publicKey =
+    typeof req.query.publicKey === "string" ? req.query.publicKey.trim() : "";
+  if (!publicKey) {
+    res.status(400).json({ error: "publicKey query parameter is required" });
+    return;
+  }
+  try {
+    const text = await formatEarningReport(publicKey);
+    res.json({ network: "testnet", text });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? "Failed" });
+  }
+});
+
+router.get("/portfolio/rebalance", async (req, res): Promise<void> => {
+  const publicKey =
+    typeof req.query.publicKey === "string" ? req.query.publicKey.trim() : "";
+  if (!publicKey) {
+    res.status(400).json({ error: "publicKey query parameter is required" });
+    return;
+  }
+  try {
+    const text = await formatRebalancePlan(publicKey);
+    res.json({ network: "testnet", text });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? "Failed" });
+  }
+});
+
 router.get("/portfolio/summary", async (req, res): Promise<void> => {
   try {
-    const keypair = await getDemoKeypair();
-    const balances = await getAccountBalances(keypair.publicKey());
+    const publicKey =
+      typeof req.query.publicKey === "string" ? req.query.publicKey.trim() : "";
+    const address = publicKey || (await getDemoKeypair()).publicKey();
+    const balances = await getAccountBalances(address);
 
     const gradientColors = [
       "hsl(290,70%,65%)",
