@@ -1,34 +1,179 @@
-import { useState, useRef, useEffect } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { Send, Sparkles, Trash2 } from "lucide-react";
-import { 
-  useGetChatMessages, 
-  useSendChatMessage, 
-  getGetChatMessagesQueryKey,
-  useClearChatHistory
-} from "@workspace/api-client-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Skeleton } from "@/components/ui/skeleton";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
+import { ArrowUp, Plus, Loader2, Sparkles } from "lucide-react";
 import { TransactionActionCard, type ChatAction } from "@/components/transaction-action-card";
+import { OnboardingChecklist } from "@/components/onboarding-checklist";
+import { useFreighter } from "@/hooks/use-freighter";
+import { Layout, type SidebarAction } from "@/components/layout";
+import { track } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
 
-const SUGGESTED_PROMPTS = [
-  "Send 10 XLM to GAG4ATX6SCHX2RJGEHF7CFH3Q22T2HZVUCD4LPF3A4LTDCTVPGIS6AFU",
-  "Find yield opportunities for XLM",
-  "Swap 100 XLM to USDC",
-  "Explain Stellar trustlines"
+const QUICK_ACTIONS = [
+  { label: "Portfolio", prompt: "What's in my portfolio?" },
+  { label: "What's earning?", prompt: "What's earning?" },
+  { label: "Rebalance", prompt: "Rebalance my positions" },
+  { label: "Prediction markets", prompt: "Show prediction markets" },
 ];
+
+type ChatMessage = {
+  id: number;
+  role: string;
+  content: string;
+  metadata?: { action?: ChatAction } | null;
+  createdAt: string;
+};
+
+async function fetchMessages(wallet: string | null): Promise<ChatMessage[]> {
+  const url = wallet
+    ? `/api/chat/messages?wallet=${encodeURIComponent(wallet)}`
+    : `/api/chat/messages`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Chat history unavailable (Postgres)");
+  }
+  return res.json();
+}
+
+async function fetchRecentTitle(wallet: string | null): Promise<string | null> {
+  const url = wallet
+    ? `/api/chat/sessions?wallet=${encodeURIComponent(wallet)}`
+    : `/api/chat/sessions`;
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  const sessions = (await res.json()) as { title?: string }[];
+  return sessions[0]?.title ?? null;
+}
+
+function mergeMessages(...lists: ChatMessage[][]): ChatMessage[] {
+  const map = new Map<number, ChatMessage>();
+  for (const list of lists) {
+    for (const msg of list) map.set(msg.id, msg);
+  }
+  return [...map.values()].sort((a, b) => {
+    const ta = Date.parse(a.createdAt);
+    const tb = Date.parse(b.createdAt);
+    if (ta !== tb) return ta - tb;
+    return a.id - b.id;
+  });
+}
 
 export default function ChatPage() {
   const queryClient = useQueryClient();
-  const { data: messages = [], isLoading } = useGetChatMessages();
-  const sendMutation = useSendChatMessage();
-  const clearMutation = useClearChatHistory();
-  
-  const [input, setInput] = useState("");
+  const { publicKey } = useFreighter();
+  const chatKey = ["chat-messages", publicKey ?? "anon"] as const;
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [sessionMessages, setSessionMessages] = useState<ChatMessage[]>([]);
+  const [pendingUser, setPendingUser] = useState<ChatMessage | null>(null);
+  const [input, setInput] = useState("");
+
+  const {
+    data: serverMessages = [],
+    isLoading,
+    isError: historyError,
+    error: historyErr,
+  } = useQuery({
+    queryKey: chatKey,
+    queryFn: () => fetchMessages(publicKey),
+    retry: 1,
+  });
+
+  const { data: sessionTitle } = useQuery({
+    queryKey: ["chat-sessions", publicKey ?? "anon"],
+    queryFn: () => fetchRecentTitle(publicKey),
+    retry: 1,
+  });
+
+  useEffect(() => {
+    setSessionMessages([]);
+    setPendingUser(null);
+  }, [publicKey]);
+
+  const messages = useMemo(
+    () =>
+      mergeMessages(
+        serverMessages,
+        sessionMessages,
+        pendingUser ? [pendingUser] : []
+      ),
+    [serverMessages, sessionMessages, pendingUser]
+  );
+
+  const sendMutation = useMutation({
+    mutationFn: async (content: string) => {
+      const res = await fetch("/api/chat/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content, context: publicKey ?? null }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Send failed");
+      }
+      return res.json() as Promise<ChatMessage>;
+    },
+    onMutate: (content) => {
+      const temp: ChatMessage = {
+        id: -Date.now(),
+        role: "user",
+        content,
+        createdAt: new Date().toISOString(),
+      };
+      setPendingUser(temp);
+      return { tempId: temp.id, content };
+    },
+    onSuccess: (aiMessage, content, ctx) => {
+      track("chat_send", {
+        walletPublicKey: publicKey,
+        metadata: { length: content.length },
+      });
+      const userMessage: ChatMessage = {
+        id: ctx?.tempId ?? -Date.now(),
+        role: "user",
+        content,
+        createdAt: new Date().toISOString(),
+      };
+      setSessionMessages((prev) => mergeMessages(prev, [userMessage, aiMessage]));
+      setPendingUser(null);
+      queryClient.invalidateQueries({ queryKey: chatKey });
+      queryClient.invalidateQueries({
+        queryKey: ["chat-sessions", publicKey ?? "anon"],
+      });
+    },
+    onError: (err) => {
+      setPendingUser(null);
+      track("error", {
+        walletPublicKey: publicKey,
+        metadata: {
+          source: "chat_send",
+          message: err instanceof Error ? err.message : "send failed",
+        },
+      });
+    },
+  });
+
+  const clearMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/chat/clear", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ context: publicKey ?? null }),
+      });
+      if (!res.ok) throw new Error("Clear failed");
+      return res.json();
+    },
+    onSuccess: () => {
+      track("chat_clear", { walletPublicKey: publicKey });
+      setSessionMessages([]);
+      setPendingUser(null);
+      queryClient.setQueryData(chatKey, []);
+      queryClient.invalidateQueries({ queryKey: chatKey });
+      queryClient.invalidateQueries({
+        queryKey: ["chat-sessions", publicKey ?? "anon"],
+      });
+    },
+  });
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -36,128 +181,216 @@ export default function ChatPage() {
     }
   }, [messages, sendMutation.isPending]);
 
-  const handleSend = (content: string) => {
-    if (!content.trim()) return;
-    
-    setInput("");
-    sendMutation.mutate({ data: { content } }, {
-      onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: getGetChatMessagesQueryKey() });
+  const handleSend = useCallback(
+    (content: string) => {
+      const text = content.trim();
+      if (!text || sendMutation.isPending) return;
+      setInput("");
+      sendMutation.mutate(text);
+      if (inputRef.current) {
+        inputRef.current.style.height = "auto";
       }
-    });
-  };
+    },
+    [sendMutation]
+  );
 
-  const handleClear = () => {
-    clearMutation.mutate(undefined, {
-      onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: getGetChatMessagesQueryKey() });
+  const onSidebarAction = useCallback(
+    (action: SidebarAction) => {
+      if (action.type === "new-chat") {
+        clearMutation.mutate();
+        return;
       }
-    });
-  };
+      if (action.type === "focus-input") {
+        inputRef.current?.focus();
+        return;
+      }
+      if (action.type === "prompt") {
+        handleSend(action.prompt);
+      }
+    },
+    [clearMutation, handleSend]
+  );
+
+  const recentTitle =
+    sessionTitle ??
+    messages.find((m) => m.role === "user")?.content.slice(0, 48) ??
+    null;
+
+  const isEmpty =
+    !isLoading &&
+    !historyError &&
+    messages.length === 0 &&
+    !sendMutation.isPending;
+
+  const composer = (
+    <div className="mx-auto w-full max-w-3xl px-3 sm:px-4">
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          handleSend(input);
+        }}
+        className="relative flex items-end gap-1.5 rounded-[26px] border border-primary/15 bg-card px-2 py-1.5 shadow-md shadow-primary/5 ring-1 ring-primary/10 sm:gap-2 sm:rounded-[28px] sm:px-3 sm:py-2"
+      >
+        <button
+          type="button"
+          className="mb-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-primary hover:bg-primary/10 sm:mb-1.5"
+          aria-label="Attach"
+        >
+          <Plus className="h-5 w-5" />
+        </button>
+        <textarea
+          ref={inputRef}
+          value={input}
+          onChange={(e) => {
+            setInput(e.target.value);
+            e.target.style.height = "auto";
+            e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              handleSend(input);
+            }
+          }}
+          placeholder="Ask anything"
+          rows={1}
+          disabled={sendMutation.isPending}
+          className="max-h-40 min-h-[40px] flex-1 resize-none bg-transparent py-2 text-[16px] leading-6 text-foreground outline-none placeholder:text-muted-foreground sm:min-h-[44px] sm:py-2.5 sm:text-[15px]"
+        />
+        <button
+          type="submit"
+          disabled={!input.trim() || sendMutation.isPending}
+          className={cn(
+            "mb-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-opacity sm:mb-1.5",
+            input.trim() && !sendMutation.isPending
+              ? "bg-orbit-gradient text-white shadow-sm hover:opacity-90"
+              : "bg-muted text-muted-foreground"
+          )}
+          aria-label="Send"
+        >
+          {sendMutation.isPending ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <ArrowUp className="h-4 w-4" />
+          )}
+        </button>
+      </form>
+      <p className="mt-2 px-1 text-center text-[11px] text-muted-foreground">
+        Orbit can make mistakes. Review transactions before signing.
+      </p>
+    </div>
+  );
 
   return (
-    <div className="flex flex-col h-full h-[calc(100vh-4rem)] md:h-screen">
-      <header className="flex items-center justify-between p-4 border-b shrink-0 bg-background/80 backdrop-blur-sm z-10 sticky top-0">
-        <div>
-          <h1 className="text-xl font-bold">Orbit Copilot</h1>
-          <p className="text-sm text-muted-foreground">Your AI financial assistant</p>
+    <Layout onSidebarAction={onSidebarAction} recentTitle={recentTitle}>
+      {historyError ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 px-4 text-center">
+          <p className="text-sm text-destructive">
+            {(historyErr as Error)?.message ??
+              "Chat requires Postgres (DATABASE_URL)."}
+          </p>
+          <p className="max-w-md text-xs text-muted-foreground">
+            Start the data plane locally with{" "}
+            <code className="rounded bg-muted px-1">docker compose up -d</code>,
+            or set DATABASE_URL and REDIS_URL in production.
+          </p>
         </div>
-        {messages.length > 0 && (
-          <Button variant="ghost" size="icon" onClick={handleClear} disabled={clearMutation.isPending}>
-            <Trash2 className="w-5 h-5 text-muted-foreground" />
-          </Button>
-        )}
-      </header>
+      ) : isEmpty ? (
+        <div className="flex flex-1 flex-col items-center justify-center bg-orbit-gradient-subtle px-3 pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:px-4 sm:pb-8">
+          <div className="mb-6 flex flex-col items-center px-2 text-center sm:mb-10">
+            <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-orbit-gradient shadow-lg shadow-primary/25 sm:mb-5 sm:h-14 sm:w-14">
+              <Sparkles className="h-6 w-6 text-white sm:h-7 sm:w-7" />
+            </div>
+            <h1 className="text-[22px] font-semibold tracking-tight sm:text-[32px]">
+              <span className="text-orbit-gradient">What&apos;s on your mind today?</span>
+            </h1>
+          </div>
+          <div className="w-full max-w-3xl">{composer}</div>
+          <div className="mt-4 w-full max-w-md px-1">
+            <OnboardingChecklist
+              hasChatted={messages.length > 0}
+              onFund={() => handleSend("Fund my wallet")}
+            />
+          </div>
+          <div className="mt-3 flex w-full max-w-3xl flex-wrap items-center justify-center gap-2 px-3 sm:mt-4 sm:px-4">
+            {QUICK_ACTIONS.map((item) => (
+              <button
+                key={item.label}
+                type="button"
+                onClick={() => handleSend(item.prompt)}
+                className="rounded-full border border-primary/20 bg-card px-3 py-1.5 text-xs text-foreground shadow-sm transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-primary sm:px-4 sm:py-2 sm:text-sm"
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <>
+          <div ref={scrollRef} className="flex-1 overflow-y-auto overscroll-contain">
+            <div className="mx-auto w-full max-w-3xl space-y-4 px-3 py-4 sm:space-y-6 sm:px-4 sm:py-6">
+              {isLoading && messages.length === 0 ? (
+                <div className="space-y-4">
+                  <div className="h-12 w-2/3 animate-pulse rounded-2xl bg-primary/10" />
+                  <div className="ml-auto h-12 w-1/2 animate-pulse rounded-2xl bg-orbit-gradient-subtle ring-1 ring-primary/20" />
+                </div>
+              ) : (
+                messages.map((msg) => {
+                  const action = msg.metadata?.action ?? null;
+                  const isUser = msg.role === "user";
+                  return (
+                    <div
+                      key={msg.id}
+                      className={cn("flex w-full flex-col", isUser ? "items-end" : "items-start")}
+                    >
+                      {!isUser && (
+                        <div className="mb-1.5 flex h-7 w-7 items-center justify-center rounded-lg bg-orbit-gradient">
+                          <Sparkles className="h-3.5 w-3.5 text-white" />
+                        </div>
+                      )}
+                      <div
+                        className={cn(
+                          "max-w-[92%] whitespace-pre-wrap break-words text-[15px] leading-7 sm:max-w-[75%]",
+                          isUser
+                            ? "rounded-[22px] bg-orbit-gradient px-3.5 py-2.5 text-white shadow-md shadow-primary/20 sm:px-4"
+                            : "rounded-2xl bg-card px-3.5 py-3 text-foreground ring-1 ring-primary/10 sm:px-4"
+                        )}
+                      >
+                        {msg.content}
+                      </div>
+                      {action && (
+                        <div className="mt-2 w-full max-w-sm">
+                          <TransactionActionCard action={action} />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-6" ref={scrollRef}>
-        {isLoading ? (
-          <div className="space-y-4">
-            <Skeleton className="h-16 w-[80%] rounded-2xl rounded-tl-sm" />
-            <Skeleton className="h-16 w-[80%] ml-auto rounded-2xl rounded-tr-sm" />
-          </div>
-        ) : messages.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center max-w-md mx-auto space-y-8 text-center px-4">
-            <div className="w-16 h-16 rounded-full bg-orbit-gradient flex items-center justify-center mb-4">
-              <Sparkles className="w-8 h-8 text-white" />
-            </div>
-            <h2 className="text-2xl font-bold">How can I help you today?</h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full">
-              {SUGGESTED_PROMPTS.map((prompt) => (
-                <button
-                  key={prompt}
-                  onClick={() => handleSend(prompt)}
-                  className="p-3 text-sm text-left border rounded-xl hover:bg-accent/5 transition-colors text-muted-foreground hover:text-foreground"
-                >
-                  {prompt}
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-6 max-w-3xl mx-auto w-full pb-4">
-            {messages.map((msg) => {
-              const action = (msg.metadata as { action?: ChatAction } | null)?.action ?? null;
-              return (
-                <div
-                  key={msg.id}
-                  className={cn(
-                    "flex w-full flex-col",
-                    msg.role === "user" ? "items-end" : "items-start"
-                  )}
-                >
-                  <div
-                    className={cn(
-                      "px-4 py-3 rounded-2xl max-w-[85%] sm:max-w-[75%]",
-                      msg.role === "user"
-                        ? "bg-orbit-gradient text-white rounded-tr-sm shadow-md"
-                        : "bg-card border shadow-sm rounded-tl-sm text-card-foreground"
-                    )}
-                  >
-                    {msg.content}
+              {sendMutation.isPending && (
+                <div className="flex items-center gap-2 px-1 py-2">
+                  <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-orbit-gradient">
+                    <Sparkles className="h-3.5 w-3.5 text-white" />
                   </div>
-                  {action && <TransactionActionCard action={action} />}
+                  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-primary [animation-delay:0ms]" />
+                  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-accent [animation-delay:150ms]" />
+                  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-chart-5 [animation-delay:300ms]" />
                 </div>
-              );
-            })}
-            
-            {sendMutation.isPending && (
-              <div className="flex w-full justify-start">
-                <div className="px-4 py-4 rounded-2xl bg-card border shadow-sm rounded-tl-sm flex gap-1 items-center">
-                  <div className="w-2 h-2 rounded-full bg-primary/40 animate-bounce" style={{ animationDelay: "0ms" }} />
-                  <div className="w-2 h-2 rounded-full bg-primary/40 animate-bounce" style={{ animationDelay: "150ms" }} />
-                  <div className="w-2 h-2 rounded-full bg-primary/40 animate-bounce" style={{ animationDelay: "300ms" }} />
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+              )}
 
-      <div className="p-4 border-t bg-background shrink-0 pb-safe">
-        <form
-          className="max-w-3xl mx-auto relative flex items-center"
-          onSubmit={(e) => {
-            e.preventDefault();
-            handleSend(input);
-          }}
-        >
-          <Input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Ask Orbit to send, swap, or analyze..."
-            className="pr-12 py-6 rounded-2xl bg-muted/50 border-transparent focus-visible:ring-primary/50 text-base"
-            disabled={sendMutation.isPending}
-          />
-          <Button
-            type="submit"
-            size="icon"
-            disabled={!input.trim() || sendMutation.isPending}
-            className="absolute right-2 h-8 w-8 rounded-xl bg-orbit-gradient text-white border-0 hover:opacity-90 transition-opacity"
-          >
-            <Send className="w-4 h-4" />
-          </Button>
-        </form>
-      </div>
-    </div>
+              {sendMutation.isError && (
+                <div className="rounded-2xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                  {(sendMutation.error as Error)?.message ?? "Something went wrong. Try again."}
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="shrink-0 bg-background/80 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 backdrop-blur-sm">
+            {composer}
+          </div>
+        </>
+      )}
+    </Layout>
   );
 }
