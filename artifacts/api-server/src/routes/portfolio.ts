@@ -9,9 +9,95 @@ import {
   formatEarningReport,
   formatRebalancePlan,
   getUnifiedPortfolioJson,
+  invalidatePortfolioCache,
 } from "../lib/portfolio";
+import { buildCoach } from "../lib/coach";
+import { recordIntent, recordOutcome } from "../lib/product-store";
 
 const router: IRouter = Router();
+
+router.get("/portfolio/coach", async (req, res): Promise<void> => {
+  const publicKey =
+    typeof req.query.publicKey === "string" ? req.query.publicKey.trim() : "";
+  if (!publicKey || !/^G[A-Z2-7]{55}$/.test(publicKey)) {
+    res.status(400).json({ error: "Valid publicKey query parameter is required" });
+    return;
+  }
+  try {
+    const coach = await buildCoach(publicKey);
+    res.json(coach);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? "Coach failed" });
+  }
+});
+
+router.post("/portfolio/invalidate", async (req, res): Promise<void> => {
+  const publicKey =
+    typeof req.body?.publicKey === "string" ? req.body.publicKey.trim() : "";
+  if (!publicKey || !/^G[A-Z2-7]{55}$/.test(publicKey)) {
+    res.status(400).json({ error: "Valid publicKey is required" });
+    return;
+  }
+  try {
+    await invalidatePortfolioCache(publicKey);
+    res.json({ ok: true });
+  } catch (err: any) {
+    res.status(503).json({ error: err?.message ?? "Invalidate failed" });
+  }
+});
+
+router.post("/portfolio/intent", async (req, res): Promise<void> => {
+  const publicKey =
+    typeof req.body?.publicKey === "string" ? req.body.publicKey.trim() : "";
+  const intent =
+    typeof req.body?.intent === "string" ? req.body.intent.trim() : "";
+  if (!publicKey || !/^G[A-Z2-7]{55}$/.test(publicKey)) {
+    res.status(400).json({ error: "Valid publicKey is required" });
+    return;
+  }
+  if (intent.length < 2) {
+    res.status(400).json({ error: "intent is required" });
+    return;
+  }
+  try {
+    await recordIntent(publicKey, intent);
+    res.status(201).json({ ok: true });
+  } catch (err: any) {
+    res.status(503).json({ error: err?.message ?? "Failed to save intent" });
+  }
+});
+
+router.post("/portfolio/outcome", async (req, res): Promise<void> => {
+  const publicKey =
+    typeof req.body?.publicKey === "string" ? req.body.publicKey.trim() : "";
+  const summary =
+    typeof req.body?.summary === "string" ? req.body.summary.trim() : "";
+  if (!publicKey || !/^G[A-Z2-7]{55}$/.test(publicKey)) {
+    res.status(400).json({ error: "Valid publicKey is required" });
+    return;
+  }
+  if (summary.length < 2) {
+    res.status(400).json({ error: "summary is required" });
+    return;
+  }
+  try {
+    await recordOutcome({
+      walletPublicKey: publicKey,
+      summary,
+      txHash:
+        typeof req.body?.txHash === "string" ? req.body.txHash : null,
+      beforeIdle:
+        typeof req.body?.beforeIdle === "string" ? req.body.beforeIdle : null,
+      afterNote:
+        typeof req.body?.afterNote === "string" ? req.body.afterNote : null,
+    });
+    await invalidatePortfolioCache(publicKey);
+    res.status(201).json({ ok: true });
+  } catch (err: any) {
+    res.status(503).json({ error: err?.message ?? "Failed to save outcome" });
+  }
+});
+
 
 router.get("/portfolio/unified", async (req, res): Promise<void> => {
   const publicKey =
