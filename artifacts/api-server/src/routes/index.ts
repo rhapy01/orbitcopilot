@@ -5,6 +5,7 @@ import walletRouter from "./wallet";
 import portfolioRouter from "./portfolio";
 import defiRouter from "./defi";
 import assetsRouter from "./assets";
+import steldexRouter from "./steldex";
 
 const router: IRouter = Router();
 
@@ -14,5 +15,6 @@ router.use(walletRouter);
 router.use(portfolioRouter);
 router.use(defiRouter);
 router.use(assetsRouter);
+router.use(steldexRouter);
 
 export default router;

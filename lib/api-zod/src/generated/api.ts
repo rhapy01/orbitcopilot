@@ -333,3 +333,308 @@ export const GetMarketOverviewResponse = zod.object({
 })
 
 
+/**
+ * @summary StelDex contract addresses, tokens, and pools (Stellar Testnet)
+ */
+export const GetSteldexContractsResponse = zod.object({
+  "factory": zod.string().nullish(),
+  "router": zod.string().nullish(),
+  "farm": zod.string().nullish(),
+  "orders": zod.string().nullish(),
+  "tokens": zod.record(zod.string(), zod.string()).optional(),
+  "pools": zod.array(zod.record(zod.string(), zod.unknown())).optional(),
+  "contractsReady": zod.boolean().optional(),
+  "sorobanRpc": zod.string().nullish(),
+  "networkPassphrase": zod.string().nullish(),
+  "network": zod.string().nullish()
+})
+
+
+/**
+ * @summary All StelDex pools
+ */
+export const GetSteldexPoolsResponseItem = zod.object({
+  "pair": zod.string().nullish(),
+  "address": zod.string().nullish(),
+  "token0": zod.string().nullish(),
+  "token1": zod.string().nullish(),
+  "symbol0": zod.string().nullish(),
+  "symbol1": zod.string().nullish()
+})
+export const GetSteldexPoolsResponse = zod.array(GetSteldexPoolsResponseItem)
+
+
+/**
+ * @summary Farm pools + user LP/stake for a wallet
+ */
+export const GetSteldexFarmPoolsQueryParams = zod.object({
+  "wallet": zod.coerce.string()
+})
+
+export const GetSteldexFarmPoolsResponseItem = zod.object({
+  "pair": zod.string().nullish(),
+  "poolContract": zod.string().nullish(),
+  "token0Symbol": zod.string().nullish(),
+  "token1Symbol": zod.string().nullish(),
+  "tvlUsd": zod.number().nullish(),
+  "lpLiquidity": zod.string().nullish(),
+  "availableToStake": zod.string().nullish(),
+  "stakedLiquidity": zod.string().nullish(),
+  "tickLower": zod.number().nullish(),
+  "tickUpper": zod.number().nullish(),
+  "farm": zod.object({
+  "weeklyStellar": zod.string().nullish(),
+  "weeklyStellarHuman": zod.number().nullish(),
+  "totalStaked": zod.string().nullish(),
+  "baseAprPercent": zod.number().nullish()
+}).optional()
+})
+export const GetSteldexFarmPoolsResponse = zod.array(GetSteldexFarmPoolsResponseItem)
+
+
+/**
+ * @summary User's staked farm positions
+ */
+export const GetSteldexFarmPositionsQueryParams = zod.object({
+  "wallet": zod.coerce.string()
+})
+
+export const GetSteldexFarmPositionsResponseItem = zod.object({
+  "poolContract": zod.string().nullish(),
+  "pair": zod.string().nullish(),
+  "tickLower": zod.number().nullish(),
+  "tickUpper": zod.number().nullish(),
+  "stake": zod.record(zod.string(), zod.unknown()).optional()
+})
+export const GetSteldexFarmPositionsResponse = zod.array(GetSteldexFarmPositionsResponseItem)
+
+
+/**
+ * @summary User's open limit orders
+ */
+export const GetSteldexOrdersQueryParams = zod.object({
+  "wallet": zod.coerce.string()
+})
+
+export const GetSteldexOrdersResponseItem = zod.object({
+  "orderId": zod.string().nullish(),
+  "pair": zod.string().nullish(),
+  "status": zod.string().nullish()
+})
+export const GetSteldexOrdersResponse = zod.array(GetSteldexOrdersResponseItem)
+
+
+/**
+ * @summary On-chain swap quote from StelDex
+ */
+export const GetSteldexSwapQuoteBody = zod.object({
+  "fromTokenContract": zod.string(),
+  "toTokenContract": zod.string(),
+  "amountIn": zod.string(),
+  "slippageBps": zod.number().nullish()
+})
+
+export const GetSteldexSwapQuoteResponse = zod.object({
+  "amountOut": zod.string().nullish(),
+  "minAmountOut": zod.string().nullish(),
+  "priceImpact": zod.number().nullish()
+})
+
+
+/**
+ * @summary Build an unsigned StelDex swap transaction
+ */
+export const PostSteldexSwapBody = zod.object({
+  "walletAddress": zod.string(),
+  "fromTokenContract": zod.string(),
+  "toTokenContract": zod.string(),
+  "amountIn": zod.string(),
+  "slippageBps": zod.number().nullish(),
+  "minAmountOut": zod.string().nullish(),
+  "stepId": zod.string().nullish()
+})
+
+export const PostSteldexSwapResponse = zod.object({
+  "xdr": zod.string().nullish(),
+  "steps": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "label": zod.string().nullish(),
+  "xdr": zod.string().nullish()
+})).nullish(),
+  "sequential": zod.boolean().nullish(),
+  "resting": zod.boolean().nullish()
+})
+
+
+/**
+ * @summary Build an unsigned add-liquidity transaction
+ */
+export const PostSteldexAddLiquidityBody = zod.object({
+  "walletAddress": zod.string(),
+  "poolContract": zod.string(),
+  "token0Contract": zod.string(),
+  "token1Contract": zod.string(),
+  "tickLower": zod.number(),
+  "tickUpper": zod.number(),
+  "amount0Desired": zod.string(),
+  "amount1Desired": zod.string(),
+  "stepId": zod.string().nullish()
+})
+
+export const PostSteldexAddLiquidityResponse = zod.object({
+  "xdr": zod.string().nullish(),
+  "steps": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "label": zod.string().nullish(),
+  "xdr": zod.string().nullish()
+})).nullish(),
+  "sequential": zod.boolean().nullish(),
+  "resting": zod.boolean().nullish()
+})
+
+
+/**
+ * @summary Build an unsigned remove-liquidity transaction
+ */
+export const PostSteldexRemoveLiquidityBody = zod.object({
+  "walletAddress": zod.string(),
+  "poolContract": zod.string(),
+  "tickLower": zod.number(),
+  "tickUpper": zod.number(),
+  "liquidity": zod.string(),
+  "amount0Min": zod.string(),
+  "amount1Min": zod.string()
+})
+
+export const PostSteldexRemoveLiquidityResponse = zod.object({
+  "xdr": zod.string().nullish(),
+  "steps": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "label": zod.string().nullish(),
+  "xdr": zod.string().nullish()
+})).nullish(),
+  "sequential": zod.boolean().nullish(),
+  "resting": zod.boolean().nullish()
+})
+
+
+/**
+ * @summary Build an unsigned farm stake transaction
+ */
+export const PostSteldexStakeBody = zod.object({
+  "walletAddress": zod.string(),
+  "poolContract": zod.string(),
+  "tickLower": zod.number(),
+  "tickUpper": zod.number(),
+  "stakeMax": zod.boolean().nullish(),
+  "liquidity": zod.string().nullish(),
+  "lockWeeks": zod.number(),
+  "autoCompound": zod.boolean().nullish(),
+  "stepId": zod.string().nullish()
+})
+
+export const PostSteldexStakeResponse = zod.object({
+  "xdr": zod.string().nullish(),
+  "steps": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "label": zod.string().nullish(),
+  "xdr": zod.string().nullish()
+})).nullish(),
+  "sequential": zod.boolean().nullish(),
+  "resting": zod.boolean().nullish()
+})
+
+
+/**
+ * @summary Build an unsigned farm reward claim transaction
+ */
+export const PostSteldexClaimBody = zod.object({
+  "walletAddress": zod.string(),
+  "poolContract": zod.string(),
+  "tickLower": zod.number(),
+  "tickUpper": zod.number()
+})
+
+export const PostSteldexClaimResponse = zod.object({
+  "xdr": zod.string().nullish(),
+  "steps": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "label": zod.string().nullish(),
+  "xdr": zod.string().nullish()
+})).nullish(),
+  "sequential": zod.boolean().nullish(),
+  "resting": zod.boolean().nullish()
+})
+
+
+/**
+ * @summary Build an unsigned farm unstake transaction
+ */
+export const PostSteldexUnstakeBody = zod.object({
+  "walletAddress": zod.string(),
+  "poolContract": zod.string(),
+  "tickLower": zod.number(),
+  "tickUpper": zod.number(),
+  "unstakeMax": zod.boolean().nullish(),
+  "liquidity": zod.string().nullish(),
+  "stepId": zod.string().nullish()
+})
+
+export const PostSteldexUnstakeResponse = zod.object({
+  "xdr": zod.string().nullish(),
+  "steps": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "label": zod.string().nullish(),
+  "xdr": zod.string().nullish()
+})).nullish(),
+  "sequential": zod.boolean().nullish(),
+  "resting": zod.boolean().nullish()
+})
+
+
+/**
+ * @summary Place a limit / stop-loss / take-profit order
+ */
+export const PostSteldexLimitOrderBody = zod.object({
+  "walletAddress": zod.string(),
+  "fromContract": zod.string(),
+  "toContract": zod.string(),
+  "amount": zod.string(),
+  "limitPrice": zod.string(),
+  "orderType": zod.enum(['Limit', 'Stop-Loss', 'Take-Profit']),
+  "expiryHours": zod.number().nullish(),
+  "stepId": zod.string().nullish()
+})
+
+export const PostSteldexLimitOrderResponse = zod.object({
+  "xdr": zod.string().nullish(),
+  "steps": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "label": zod.string().nullish(),
+  "xdr": zod.string().nullish()
+})).nullish(),
+  "sequential": zod.boolean().nullish(),
+  "resting": zod.boolean().nullish()
+})
+
+
+/**
+ * @summary Cancel a resting limit order
+ */
+export const PostSteldexCancelOrderBody = zod.object({
+  "walletAddress": zod.string(),
+  "orderId": zod.string()
+})
+
+export const PostSteldexCancelOrderResponse = zod.object({
+  "xdr": zod.string().nullish(),
+  "steps": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "label": zod.string().nullish(),
+  "xdr": zod.string().nullish()
+})).nullish(),
+  "sequential": zod.boolean().nullish(),
+  "resting": zod.boolean().nullish()
+})
+
+

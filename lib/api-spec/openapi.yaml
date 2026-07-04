@@ -21,6 +21,8 @@ tags:
     description: Asset discovery
   - name: transactions
     description: Transaction history
+  - name: steldex
+    description: Unicorn StelDex integration (Stellar Testnet AMM/farm/limit-order router)
 paths:
   /healthz:
     get:
@@ -307,6 +309,286 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MarketOverview"
+
+  /steldex/contracts:
+    get:
+      operationId: getSteldexContracts
+      tags: [steldex]
+      summary: StelDex contract addresses, tokens, and pools (Stellar Testnet)
+      responses:
+        "200":
+          description: Contracts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SteldexContracts"
+
+  /steldex/pools:
+    get:
+      operationId: getSteldexPools
+      tags: [steldex]
+      summary: All StelDex pools
+      responses:
+        "200":
+          description: Pools
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SteldexPool"
+
+  /steldex/farm-pools:
+    get:
+      operationId: getSteldexFarmPools
+      tags: [steldex]
+      summary: Farm pools + user LP/stake for a wallet
+      parameters:
+        - name: wallet
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Farm pools
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SteldexFarmPool"
+
+  /steldex/farm-positions:
+    get:
+      operationId: getSteldexFarmPositions
+      tags: [steldex]
+      summary: User's staked farm positions
+      parameters:
+        - name: wallet
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Farm positions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SteldexFarmPosition"
+
+  /steldex/orders:
+    get:
+      operationId: getSteldexOrders
+      tags: [steldex]
+      summary: User's open limit orders
+      parameters:
+        - name: wallet
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Orders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SteldexOrder"
+
+  /steldex/swap-quote:
+    post:
+      operationId: getSteldexSwapQuote
+      tags: [steldex]
+      summary: On-chain swap quote from StelDex
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SteldexSwapQuoteInput"
+      responses:
+        "200":
+          description: Swap quote
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SteldexSwapQuoteResult"
+        "400":
+          description: Invalid quote request
+
+  /steldex/swap:
+    post:
+      operationId: postSteldexSwap
+      tags: [steldex]
+      summary: Build an unsigned StelDex swap transaction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SteldexSwapInput"
+      responses:
+        "200":
+          description: Unsigned transaction (single or multi-step)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SteldexTxResult"
+        "400":
+          description: Invalid swap request
+
+  /steldex/add-liquidity:
+    post:
+      operationId: postSteldexAddLiquidity
+      tags: [steldex]
+      summary: Build an unsigned add-liquidity transaction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SteldexAddLiquidityInput"
+      responses:
+        "200":
+          description: Unsigned transaction
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SteldexTxResult"
+        "400":
+          description: Invalid request
+
+  /steldex/remove-liquidity:
+    post:
+      operationId: postSteldexRemoveLiquidity
+      tags: [steldex]
+      summary: Build an unsigned remove-liquidity transaction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SteldexRemoveLiquidityInput"
+      responses:
+        "200":
+          description: Unsigned transaction
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SteldexTxResult"
+        "400":
+          description: Invalid request
+
+  /steldex/stake:
+    post:
+      operationId: postSteldexStake
+      tags: [steldex]
+      summary: Build an unsigned farm stake transaction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SteldexStakeInput"
+      responses:
+        "200":
+          description: Unsigned transaction
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SteldexTxResult"
+        "400":
+          description: Invalid request
+
+  /steldex/claim:
+    post:
+      operationId: postSteldexClaim
+      tags: [steldex]
+      summary: Build an unsigned farm reward claim transaction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SteldexClaimInput"
+      responses:
+        "200":
+          description: Unsigned transaction
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SteldexTxResult"
+        "400":
+          description: Invalid request
+
+  /steldex/unstake:
+    post:
+      operationId: postSteldexUnstake
+      tags: [steldex]
+      summary: Build an unsigned farm unstake transaction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SteldexUnstakeInput"
+      responses:
+        "200":
+          description: Unsigned transaction
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SteldexTxResult"
+        "400":
+          description: Invalid request
+
+  /steldex/limit-order:
+    post:
+      operationId: postSteldexLimitOrder
+      tags: [steldex]
+      summary: Place a limit / stop-loss / take-profit order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SteldexLimitOrderInput"
+      responses:
+        "200":
+          description: Unsigned transaction or resting order confirmation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SteldexTxResult"
+        "400":
+          description: Invalid request
+
+  /steldex/cancel-order:
+    post:
+      operationId: postSteldexCancelOrder
+      tags: [steldex]
+      summary: Cancel a resting limit order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SteldexCancelOrderInput"
+      responses:
+        "200":
+          description: Unsigned transaction
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SteldexTxResult"
+        "400":
+          description: Invalid request
 
 components:
   schemas:
@@ -615,3 +897,321 @@ components:
         stellarTvlUsd:
           type: number
       required: [topGainers, topLosers, trending, totalMarketCapUsd, stellarTvlUsd]
+
+    SteldexContracts:
+      type: object
+      additionalProperties: true
+      properties:
+        factory:
+          type: ["string", "null"]
+        router:
+          type: ["string", "null"]
+        farm:
+          type: ["string", "null"]
+        orders:
+          type: ["string", "null"]
+        tokens:
+          type: object
+          additionalProperties:
+            type: string
+        pools:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        contractsReady:
+          type: boolean
+        sorobanRpc:
+          type: ["string", "null"]
+        networkPassphrase:
+          type: ["string", "null"]
+        network:
+          type: ["string", "null"]
+
+    SteldexPool:
+      type: object
+      additionalProperties: true
+      properties:
+        pair:
+          type: ["string", "null"]
+        address:
+          type: ["string", "null"]
+        token0:
+          type: ["string", "null"]
+        token1:
+          type: ["string", "null"]
+        symbol0:
+          type: ["string", "null"]
+        symbol1:
+          type: ["string", "null"]
+
+    SteldexFarmPool:
+      type: object
+      additionalProperties: true
+      properties:
+        pair:
+          type: ["string", "null"]
+        poolContract:
+          type: ["string", "null"]
+        token0Symbol:
+          type: ["string", "null"]
+        token1Symbol:
+          type: ["string", "null"]
+        tvlUsd:
+          type: ["number", "null"]
+        lpLiquidity:
+          type: ["string", "null"]
+        availableToStake:
+          type: ["string", "null"]
+        stakedLiquidity:
+          type: ["string", "null"]
+        tickLower:
+          type: ["number", "null"]
+        tickUpper:
+          type: ["number", "null"]
+        farm:
+          type: object
+          additionalProperties: true
+          properties:
+            weeklyStellar:
+              type: ["string", "null"]
+            weeklyStellarHuman:
+              type: ["number", "null"]
+            totalStaked:
+              type: ["string", "null"]
+            baseAprPercent:
+              type: ["number", "null"]
+
+    SteldexFarmPosition:
+      type: object
+      additionalProperties: true
+      properties:
+        poolContract:
+          type: ["string", "null"]
+        pair:
+          type: ["string", "null"]
+        tickLower:
+          type: ["number", "null"]
+        tickUpper:
+          type: ["number", "null"]
+        stake:
+          type: object
+          additionalProperties: true
+
+    SteldexOrder:
+      type: object
+      additionalProperties: true
+      properties:
+        orderId:
+          type: ["string", "null"]
+        pair:
+          type: ["string", "null"]
+        status:
+          type: ["string", "null"]
+
+    SteldexSwapQuoteInput:
+      type: object
+      properties:
+        fromTokenContract:
+          type: string
+        toTokenContract:
+          type: string
+        amountIn:
+          type: string
+        slippageBps:
+          type: ["integer", "null"]
+      required: [fromTokenContract, toTokenContract, amountIn]
+
+    SteldexSwapQuoteResult:
+      type: object
+      additionalProperties: true
+      properties:
+        amountOut:
+          type: ["string", "null"]
+        minAmountOut:
+          type: ["string", "null"]
+        priceImpact:
+          type: ["number", "null"]
+
+    SteldexTxStep:
+      type: object
+      additionalProperties: true
+      properties:
+        id:
+          type: string
+        label:
+          type: ["string", "null"]
+        xdr:
+          type: ["string", "null"]
+
+    SteldexTxResult:
+      type: object
+      additionalProperties: true
+      properties:
+        xdr:
+          type: ["string", "null"]
+        steps:
+          type: ["array", "null"]
+          items:
+            $ref: "#/components/schemas/SteldexTxStep"
+        sequential:
+          type: ["boolean", "null"]
+        resting:
+          type: ["boolean", "null"]
+
+    SteldexSwapInput:
+      type: object
+      properties:
+        walletAddress:
+          type: string
+        fromTokenContract:
+          type: string
+        toTokenContract:
+          type: string
+        amountIn:
+          type: string
+        slippageBps:
+          type: ["integer", "null"]
+        minAmountOut:
+          type: ["string", "null"]
+        stepId:
+          type: ["string", "null"]
+      required: [walletAddress, fromTokenContract, toTokenContract, amountIn]
+
+    SteldexAddLiquidityInput:
+      type: object
+      properties:
+        walletAddress:
+          type: string
+        poolContract:
+          type: string
+        token0Contract:
+          type: string
+        token1Contract:
+          type: string
+        tickLower:
+          type: integer
+        tickUpper:
+          type: integer
+        amount0Desired:
+          type: string
+        amount1Desired:
+          type: string
+        stepId:
+          type: ["string", "null"]
+      required:
+        [
+          walletAddress,
+          poolContract,
+          token0Contract,
+          token1Contract,
+          tickLower,
+          tickUpper,
+          amount0Desired,
+          amount1Desired,
+        ]
+
+    SteldexRemoveLiquidityInput:
+      type: object
+      properties:
+        walletAddress:
+          type: string
+        poolContract:
+          type: string
+        tickLower:
+          type: integer
+        tickUpper:
+          type: integer
+        liquidity:
+          type: string
+        amount0Min:
+          type: string
+        amount1Min:
+          type: string
+      required: [walletAddress, poolContract, tickLower, tickUpper, liquidity, amount0Min, amount1Min]
+
+    SteldexStakeInput:
+      type: object
+      properties:
+        walletAddress:
+          type: string
+        poolContract:
+          type: string
+        tickLower:
+          type: integer
+        tickUpper:
+          type: integer
+        stakeMax:
+          type: ["boolean", "null"]
+        liquidity:
+          type: ["string", "null"]
+        lockWeeks:
+          type: integer
+        autoCompound:
+          type: ["boolean", "null"]
+        stepId:
+          type: ["string", "null"]
+      required: [walletAddress, poolContract, tickLower, tickUpper, lockWeeks]
+
+    SteldexClaimInput:
+      type: object
+      properties:
+        walletAddress:
+          type: string
+        poolContract:
+          type: string
+        tickLower:
+          type: integer
+        tickUpper:
+          type: integer
+      required: [walletAddress, poolContract, tickLower, tickUpper]
+
+    SteldexUnstakeInput:
+      type: object
+      properties:
+        walletAddress:
+          type: string
+        poolContract:
+          type: string
+        tickLower:
+          type: integer
+        tickUpper:
+          type: integer
+        unstakeMax:
+          type: ["boolean", "null"]
+        liquidity:
+          type: ["string", "null"]
+        stepId:
+          type: ["string", "null"]
+      required: [walletAddress, poolContract, tickLower, tickUpper]
+
+    SteldexLimitOrderInput:
+      type: object
+      properties:
+        walletAddress:
+          type: string
+        fromContract:
+          type: string
+        toContract:
+          type: string
+        amount:
+          type: string
+        limitPrice:
+          type: string
+        orderType:
+          type: string
+          enum: [Limit, Stop-Loss, Take-Profit]
+        expiryHours:
+          type: ["integer", "null"]
+        stepId:
+          type: ["string", "null"]
+      required: [walletAddress, fromContract, toContract, amount, limitPrice, orderType]
+
+    SteldexCancelOrderInput:
+      type: object
+      properties:
+        walletAddress:
+          type: string
+        orderId:
+          type: string
+      required: [walletAddress, orderId]

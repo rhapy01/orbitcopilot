@@ -27,12 +27,31 @@ import type {
   ChatMessage,
   ChatMessageInput,
   DefiOpportunity,
+  GetSteldexFarmPoolsParams,
+  GetSteldexFarmPositionsParams,
+  GetSteldexOrdersParams,
   GetTransactionsParams,
   GetWalletAssetsParams,
   GetWalletParams,
   HealthStatus,
   MarketOverview,
   PortfolioSummary,
+  SteldexAddLiquidityInput,
+  SteldexCancelOrderInput,
+  SteldexClaimInput,
+  SteldexContracts,
+  SteldexFarmPool,
+  SteldexFarmPosition,
+  SteldexLimitOrderInput,
+  SteldexOrder,
+  SteldexPool,
+  SteldexRemoveLiquidityInput,
+  SteldexStakeInput,
+  SteldexSwapInput,
+  SteldexSwapQuoteInput,
+  SteldexSwapQuoteResult,
+  SteldexTxResult,
+  SteldexUnstakeInput,
   SubmitTransactionInput,
   SubmitTransactionResult,
   SuccessResponse,
@@ -1362,4 +1381,1040 @@ export function useGetMarketOverview<TData = Awaited<ReturnType<typeof getMarket
 
 
 
+
+export const getGetSteldexContractsUrl = () => {
+
+
+
+
+  return `/api/steldex/contracts`
+}
+
+/**
+ * @summary StelDex contract addresses, tokens, and pools (Stellar Testnet)
+ */
+export const getSteldexContracts = async ( options?: RequestInit): Promise<SteldexContracts> => {
+
+  return customFetch<SteldexContracts>(getGetSteldexContractsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetSteldexContractsQueryKey = () => {
+    return [
+    `/api/steldex/contracts`
+    ] as const;
+    }
+
+
+export const getGetSteldexContractsQueryOptions = <TData = Awaited<ReturnType<typeof getSteldexContracts>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSteldexContracts>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetSteldexContractsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getSteldexContracts>>> = ({ signal }) => getSteldexContracts({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getSteldexContracts>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetSteldexContractsQueryResult = NonNullable<Awaited<ReturnType<typeof getSteldexContracts>>>
+export type GetSteldexContractsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary StelDex contract addresses, tokens, and pools (Stellar Testnet)
+ */
+
+export function useGetSteldexContracts<TData = Awaited<ReturnType<typeof getSteldexContracts>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSteldexContracts>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetSteldexContractsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetSteldexPoolsUrl = () => {
+
+
+
+
+  return `/api/steldex/pools`
+}
+
+/**
+ * @summary All StelDex pools
+ */
+export const getSteldexPools = async ( options?: RequestInit): Promise<SteldexPool[]> => {
+
+  return customFetch<SteldexPool[]>(getGetSteldexPoolsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetSteldexPoolsQueryKey = () => {
+    return [
+    `/api/steldex/pools`
+    ] as const;
+    }
+
+
+export const getGetSteldexPoolsQueryOptions = <TData = Awaited<ReturnType<typeof getSteldexPools>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSteldexPools>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetSteldexPoolsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getSteldexPools>>> = ({ signal }) => getSteldexPools({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getSteldexPools>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetSteldexPoolsQueryResult = NonNullable<Awaited<ReturnType<typeof getSteldexPools>>>
+export type GetSteldexPoolsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary All StelDex pools
+ */
+
+export function useGetSteldexPools<TData = Awaited<ReturnType<typeof getSteldexPools>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSteldexPools>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetSteldexPoolsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetSteldexFarmPoolsUrl = (params: GetSteldexFarmPoolsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/steldex/farm-pools?${stringifiedParams}` : `/api/steldex/farm-pools`
+}
+
+/**
+ * @summary Farm pools + user LP/stake for a wallet
+ */
+export const getSteldexFarmPools = async (params: GetSteldexFarmPoolsParams, options?: RequestInit): Promise<SteldexFarmPool[]> => {
+
+  return customFetch<SteldexFarmPool[]>(getGetSteldexFarmPoolsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetSteldexFarmPoolsQueryKey = (params?: GetSteldexFarmPoolsParams,) => {
+    return [
+    `/api/steldex/farm-pools`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetSteldexFarmPoolsQueryOptions = <TData = Awaited<ReturnType<typeof getSteldexFarmPools>>, TError = ErrorType<unknown>>(params: GetSteldexFarmPoolsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSteldexFarmPools>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetSteldexFarmPoolsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getSteldexFarmPools>>> = ({ signal }) => getSteldexFarmPools(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getSteldexFarmPools>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetSteldexFarmPoolsQueryResult = NonNullable<Awaited<ReturnType<typeof getSteldexFarmPools>>>
+export type GetSteldexFarmPoolsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Farm pools + user LP/stake for a wallet
+ */
+
+export function useGetSteldexFarmPools<TData = Awaited<ReturnType<typeof getSteldexFarmPools>>, TError = ErrorType<unknown>>(
+ params: GetSteldexFarmPoolsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSteldexFarmPools>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetSteldexFarmPoolsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetSteldexFarmPositionsUrl = (params: GetSteldexFarmPositionsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/steldex/farm-positions?${stringifiedParams}` : `/api/steldex/farm-positions`
+}
+
+/**
+ * @summary User's staked farm positions
+ */
+export const getSteldexFarmPositions = async (params: GetSteldexFarmPositionsParams, options?: RequestInit): Promise<SteldexFarmPosition[]> => {
+
+  return customFetch<SteldexFarmPosition[]>(getGetSteldexFarmPositionsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetSteldexFarmPositionsQueryKey = (params?: GetSteldexFarmPositionsParams,) => {
+    return [
+    `/api/steldex/farm-positions`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetSteldexFarmPositionsQueryOptions = <TData = Awaited<ReturnType<typeof getSteldexFarmPositions>>, TError = ErrorType<unknown>>(params: GetSteldexFarmPositionsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSteldexFarmPositions>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetSteldexFarmPositionsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getSteldexFarmPositions>>> = ({ signal }) => getSteldexFarmPositions(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getSteldexFarmPositions>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetSteldexFarmPositionsQueryResult = NonNullable<Awaited<ReturnType<typeof getSteldexFarmPositions>>>
+export type GetSteldexFarmPositionsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary User's staked farm positions
+ */
+
+export function useGetSteldexFarmPositions<TData = Awaited<ReturnType<typeof getSteldexFarmPositions>>, TError = ErrorType<unknown>>(
+ params: GetSteldexFarmPositionsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSteldexFarmPositions>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetSteldexFarmPositionsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetSteldexOrdersUrl = (params: GetSteldexOrdersParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/steldex/orders?${stringifiedParams}` : `/api/steldex/orders`
+}
+
+/**
+ * @summary User's open limit orders
+ */
+export const getSteldexOrders = async (params: GetSteldexOrdersParams, options?: RequestInit): Promise<SteldexOrder[]> => {
+
+  return customFetch<SteldexOrder[]>(getGetSteldexOrdersUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetSteldexOrdersQueryKey = (params?: GetSteldexOrdersParams,) => {
+    return [
+    `/api/steldex/orders`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetSteldexOrdersQueryOptions = <TData = Awaited<ReturnType<typeof getSteldexOrders>>, TError = ErrorType<unknown>>(params: GetSteldexOrdersParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSteldexOrders>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetSteldexOrdersQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getSteldexOrders>>> = ({ signal }) => getSteldexOrders(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getSteldexOrders>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetSteldexOrdersQueryResult = NonNullable<Awaited<ReturnType<typeof getSteldexOrders>>>
+export type GetSteldexOrdersQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary User's open limit orders
+ */
+
+export function useGetSteldexOrders<TData = Awaited<ReturnType<typeof getSteldexOrders>>, TError = ErrorType<unknown>>(
+ params: GetSteldexOrdersParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSteldexOrders>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetSteldexOrdersQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetSteldexSwapQuoteUrl = () => {
+
+
+
+
+  return `/api/steldex/swap-quote`
+}
+
+/**
+ * @summary On-chain swap quote from StelDex
+ */
+export const getSteldexSwapQuote = async (steldexSwapQuoteInput: SteldexSwapQuoteInput, options?: RequestInit): Promise<SteldexSwapQuoteResult> => {
+
+  return customFetch<SteldexSwapQuoteResult>(getGetSteldexSwapQuoteUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(steldexSwapQuoteInput)
+  }
+);}
+
+
+
+
+export const getGetSteldexSwapQuoteMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof getSteldexSwapQuote>>, TError,{data: BodyType<SteldexSwapQuoteInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof getSteldexSwapQuote>>, TError,{data: BodyType<SteldexSwapQuoteInput>}, TContext> => {
+
+const mutationKey = ['getSteldexSwapQuote'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof getSteldexSwapQuote>>, {data: BodyType<SteldexSwapQuoteInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  getSteldexSwapQuote(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type GetSteldexSwapQuoteMutationResult = NonNullable<Awaited<ReturnType<typeof getSteldexSwapQuote>>>
+    export type GetSteldexSwapQuoteMutationBody = BodyType<SteldexSwapQuoteInput>
+    export type GetSteldexSwapQuoteMutationError = ErrorType<void>
+
+    /**
+ * @summary On-chain swap quote from StelDex
+ */
+export const useGetSteldexSwapQuote = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof getSteldexSwapQuote>>, TError,{data: BodyType<SteldexSwapQuoteInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof getSteldexSwapQuote>>,
+        TError,
+        {data: BodyType<SteldexSwapQuoteInput>},
+        TContext
+      > => {
+      return useMutation(getGetSteldexSwapQuoteMutationOptions(options));
+    }
+
+export const getPostSteldexSwapUrl = () => {
+
+
+
+
+  return `/api/steldex/swap`
+}
+
+/**
+ * @summary Build an unsigned StelDex swap transaction
+ */
+export const postSteldexSwap = async (steldexSwapInput: SteldexSwapInput, options?: RequestInit): Promise<SteldexTxResult> => {
+
+  return customFetch<SteldexTxResult>(getPostSteldexSwapUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(steldexSwapInput)
+  }
+);}
+
+
+
+
+export const getPostSteldexSwapMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postSteldexSwap>>, TError,{data: BodyType<SteldexSwapInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof postSteldexSwap>>, TError,{data: BodyType<SteldexSwapInput>}, TContext> => {
+
+const mutationKey = ['postSteldexSwap'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof postSteldexSwap>>, {data: BodyType<SteldexSwapInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  postSteldexSwap(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PostSteldexSwapMutationResult = NonNullable<Awaited<ReturnType<typeof postSteldexSwap>>>
+    export type PostSteldexSwapMutationBody = BodyType<SteldexSwapInput>
+    export type PostSteldexSwapMutationError = ErrorType<void>
+
+    /**
+ * @summary Build an unsigned StelDex swap transaction
+ */
+export const usePostSteldexSwap = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postSteldexSwap>>, TError,{data: BodyType<SteldexSwapInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof postSteldexSwap>>,
+        TError,
+        {data: BodyType<SteldexSwapInput>},
+        TContext
+      > => {
+      return useMutation(getPostSteldexSwapMutationOptions(options));
+    }
+
+export const getPostSteldexAddLiquidityUrl = () => {
+
+
+
+
+  return `/api/steldex/add-liquidity`
+}
+
+/**
+ * @summary Build an unsigned add-liquidity transaction
+ */
+export const postSteldexAddLiquidity = async (steldexAddLiquidityInput: SteldexAddLiquidityInput, options?: RequestInit): Promise<SteldexTxResult> => {
+
+  return customFetch<SteldexTxResult>(getPostSteldexAddLiquidityUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(steldexAddLiquidityInput)
+  }
+);}
+
+
+
+
+export const getPostSteldexAddLiquidityMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postSteldexAddLiquidity>>, TError,{data: BodyType<SteldexAddLiquidityInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof postSteldexAddLiquidity>>, TError,{data: BodyType<SteldexAddLiquidityInput>}, TContext> => {
+
+const mutationKey = ['postSteldexAddLiquidity'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof postSteldexAddLiquidity>>, {data: BodyType<SteldexAddLiquidityInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  postSteldexAddLiquidity(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PostSteldexAddLiquidityMutationResult = NonNullable<Awaited<ReturnType<typeof postSteldexAddLiquidity>>>
+    export type PostSteldexAddLiquidityMutationBody = BodyType<SteldexAddLiquidityInput>
+    export type PostSteldexAddLiquidityMutationError = ErrorType<void>
+
+    /**
+ * @summary Build an unsigned add-liquidity transaction
+ */
+export const usePostSteldexAddLiquidity = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postSteldexAddLiquidity>>, TError,{data: BodyType<SteldexAddLiquidityInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof postSteldexAddLiquidity>>,
+        TError,
+        {data: BodyType<SteldexAddLiquidityInput>},
+        TContext
+      > => {
+      return useMutation(getPostSteldexAddLiquidityMutationOptions(options));
+    }
+
+export const getPostSteldexRemoveLiquidityUrl = () => {
+
+
+
+
+  return `/api/steldex/remove-liquidity`
+}
+
+/**
+ * @summary Build an unsigned remove-liquidity transaction
+ */
+export const postSteldexRemoveLiquidity = async (steldexRemoveLiquidityInput: SteldexRemoveLiquidityInput, options?: RequestInit): Promise<SteldexTxResult> => {
+
+  return customFetch<SteldexTxResult>(getPostSteldexRemoveLiquidityUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(steldexRemoveLiquidityInput)
+  }
+);}
+
+
+
+
+export const getPostSteldexRemoveLiquidityMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postSteldexRemoveLiquidity>>, TError,{data: BodyType<SteldexRemoveLiquidityInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof postSteldexRemoveLiquidity>>, TError,{data: BodyType<SteldexRemoveLiquidityInput>}, TContext> => {
+
+const mutationKey = ['postSteldexRemoveLiquidity'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof postSteldexRemoveLiquidity>>, {data: BodyType<SteldexRemoveLiquidityInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  postSteldexRemoveLiquidity(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PostSteldexRemoveLiquidityMutationResult = NonNullable<Awaited<ReturnType<typeof postSteldexRemoveLiquidity>>>
+    export type PostSteldexRemoveLiquidityMutationBody = BodyType<SteldexRemoveLiquidityInput>
+    export type PostSteldexRemoveLiquidityMutationError = ErrorType<void>
+
+    /**
+ * @summary Build an unsigned remove-liquidity transaction
+ */
+export const usePostSteldexRemoveLiquidity = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postSteldexRemoveLiquidity>>, TError,{data: BodyType<SteldexRemoveLiquidityInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof postSteldexRemoveLiquidity>>,
+        TError,
+        {data: BodyType<SteldexRemoveLiquidityInput>},
+        TContext
+      > => {
+      return useMutation(getPostSteldexRemoveLiquidityMutationOptions(options));
+    }
+
+export const getPostSteldexStakeUrl = () => {
+
+
+
+
+  return `/api/steldex/stake`
+}
+
+/**
+ * @summary Build an unsigned farm stake transaction
+ */
+export const postSteldexStake = async (steldexStakeInput: SteldexStakeInput, options?: RequestInit): Promise<SteldexTxResult> => {
+
+  return customFetch<SteldexTxResult>(getPostSteldexStakeUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(steldexStakeInput)
+  }
+);}
+
+
+
+
+export const getPostSteldexStakeMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postSteldexStake>>, TError,{data: BodyType<SteldexStakeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof postSteldexStake>>, TError,{data: BodyType<SteldexStakeInput>}, TContext> => {
+
+const mutationKey = ['postSteldexStake'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof postSteldexStake>>, {data: BodyType<SteldexStakeInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  postSteldexStake(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PostSteldexStakeMutationResult = NonNullable<Awaited<ReturnType<typeof postSteldexStake>>>
+    export type PostSteldexStakeMutationBody = BodyType<SteldexStakeInput>
+    export type PostSteldexStakeMutationError = ErrorType<void>
+
+    /**
+ * @summary Build an unsigned farm stake transaction
+ */
+export const usePostSteldexStake = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postSteldexStake>>, TError,{data: BodyType<SteldexStakeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof postSteldexStake>>,
+        TError,
+        {data: BodyType<SteldexStakeInput>},
+        TContext
+      > => {
+      return useMutation(getPostSteldexStakeMutationOptions(options));
+    }
+
+export const getPostSteldexClaimUrl = () => {
+
+
+
+
+  return `/api/steldex/claim`
+}
+
+/**
+ * @summary Build an unsigned farm reward claim transaction
+ */
+export const postSteldexClaim = async (steldexClaimInput: SteldexClaimInput, options?: RequestInit): Promise<SteldexTxResult> => {
+
+  return customFetch<SteldexTxResult>(getPostSteldexClaimUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(steldexClaimInput)
+  }
+);}
+
+
+
+
+export const getPostSteldexClaimMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postSteldexClaim>>, TError,{data: BodyType<SteldexClaimInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof postSteldexClaim>>, TError,{data: BodyType<SteldexClaimInput>}, TContext> => {
+
+const mutationKey = ['postSteldexClaim'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof postSteldexClaim>>, {data: BodyType<SteldexClaimInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  postSteldexClaim(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PostSteldexClaimMutationResult = NonNullable<Awaited<ReturnType<typeof postSteldexClaim>>>
+    export type PostSteldexClaimMutationBody = BodyType<SteldexClaimInput>
+    export type PostSteldexClaimMutationError = ErrorType<void>
+
+    /**
+ * @summary Build an unsigned farm reward claim transaction
+ */
+export const usePostSteldexClaim = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postSteldexClaim>>, TError,{data: BodyType<SteldexClaimInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof postSteldexClaim>>,
+        TError,
+        {data: BodyType<SteldexClaimInput>},
+        TContext
+      > => {
+      return useMutation(getPostSteldexClaimMutationOptions(options));
+    }
+
+export const getPostSteldexUnstakeUrl = () => {
+
+
+
+
+  return `/api/steldex/unstake`
+}
+
+/**
+ * @summary Build an unsigned farm unstake transaction
+ */
+export const postSteldexUnstake = async (steldexUnstakeInput: SteldexUnstakeInput, options?: RequestInit): Promise<SteldexTxResult> => {
+
+  return customFetch<SteldexTxResult>(getPostSteldexUnstakeUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(steldexUnstakeInput)
+  }
+);}
+
+
+
+
+export const getPostSteldexUnstakeMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postSteldexUnstake>>, TError,{data: BodyType<SteldexUnstakeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof postSteldexUnstake>>, TError,{data: BodyType<SteldexUnstakeInput>}, TContext> => {
+
+const mutationKey = ['postSteldexUnstake'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof postSteldexUnstake>>, {data: BodyType<SteldexUnstakeInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  postSteldexUnstake(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PostSteldexUnstakeMutationResult = NonNullable<Awaited<ReturnType<typeof postSteldexUnstake>>>
+    export type PostSteldexUnstakeMutationBody = BodyType<SteldexUnstakeInput>
+    export type PostSteldexUnstakeMutationError = ErrorType<void>
+
+    /**
+ * @summary Build an unsigned farm unstake transaction
+ */
+export const usePostSteldexUnstake = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postSteldexUnstake>>, TError,{data: BodyType<SteldexUnstakeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof postSteldexUnstake>>,
+        TError,
+        {data: BodyType<SteldexUnstakeInput>},
+        TContext
+      > => {
+      return useMutation(getPostSteldexUnstakeMutationOptions(options));
+    }
+
+export const getPostSteldexLimitOrderUrl = () => {
+
+
+
+
+  return `/api/steldex/limit-order`
+}
+
+/**
+ * @summary Place a limit / stop-loss / take-profit order
+ */
+export const postSteldexLimitOrder = async (steldexLimitOrderInput: SteldexLimitOrderInput, options?: RequestInit): Promise<SteldexTxResult> => {
+
+  return customFetch<SteldexTxResult>(getPostSteldexLimitOrderUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(steldexLimitOrderInput)
+  }
+);}
+
+
+
+
+export const getPostSteldexLimitOrderMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postSteldexLimitOrder>>, TError,{data: BodyType<SteldexLimitOrderInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof postSteldexLimitOrder>>, TError,{data: BodyType<SteldexLimitOrderInput>}, TContext> => {
+
+const mutationKey = ['postSteldexLimitOrder'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof postSteldexLimitOrder>>, {data: BodyType<SteldexLimitOrderInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  postSteldexLimitOrder(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PostSteldexLimitOrderMutationResult = NonNullable<Awaited<ReturnType<typeof postSteldexLimitOrder>>>
+    export type PostSteldexLimitOrderMutationBody = BodyType<SteldexLimitOrderInput>
+    export type PostSteldexLimitOrderMutationError = ErrorType<void>
+
+    /**
+ * @summary Place a limit / stop-loss / take-profit order
+ */
+export const usePostSteldexLimitOrder = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postSteldexLimitOrder>>, TError,{data: BodyType<SteldexLimitOrderInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof postSteldexLimitOrder>>,
+        TError,
+        {data: BodyType<SteldexLimitOrderInput>},
+        TContext
+      > => {
+      return useMutation(getPostSteldexLimitOrderMutationOptions(options));
+    }
+
+export const getPostSteldexCancelOrderUrl = () => {
+
+
+
+
+  return `/api/steldex/cancel-order`
+}
+
+/**
+ * @summary Cancel a resting limit order
+ */
+export const postSteldexCancelOrder = async (steldexCancelOrderInput: SteldexCancelOrderInput, options?: RequestInit): Promise<SteldexTxResult> => {
+
+  return customFetch<SteldexTxResult>(getPostSteldexCancelOrderUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(steldexCancelOrderInput)
+  }
+);}
+
+
+
+
+export const getPostSteldexCancelOrderMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postSteldexCancelOrder>>, TError,{data: BodyType<SteldexCancelOrderInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof postSteldexCancelOrder>>, TError,{data: BodyType<SteldexCancelOrderInput>}, TContext> => {
+
+const mutationKey = ['postSteldexCancelOrder'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof postSteldexCancelOrder>>, {data: BodyType<SteldexCancelOrderInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  postSteldexCancelOrder(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PostSteldexCancelOrderMutationResult = NonNullable<Awaited<ReturnType<typeof postSteldexCancelOrder>>>
+    export type PostSteldexCancelOrderMutationBody = BodyType<SteldexCancelOrderInput>
+    export type PostSteldexCancelOrderMutationError = ErrorType<void>
+
+    /**
+ * @summary Cancel a resting limit order
+ */
+export const usePostSteldexCancelOrder = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postSteldexCancelOrder>>, TError,{data: BodyType<SteldexCancelOrderInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof postSteldexCancelOrder>>,
+        TError,
+        {data: BodyType<SteldexCancelOrderInput>},
+        TContext
+      > => {
+      return useMutation(getPostSteldexCancelOrderMutationOptions(options));
+    }
 

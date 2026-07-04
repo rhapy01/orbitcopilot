@@ -26,6 +26,8 @@ const AI_RESPONSES: Record<string, string> = {
     "Your portfolio is looking healthy! You're up 3.2% in the last 24 hours. Your largest holding is USDC at 45% of your portfolio, followed by XLM at 30%. Want me to suggest some rebalancing strategies or yield opportunities for your idle USDC?",
   risk:
     "Risk assessment is important in DeFi. I evaluate opportunities based on protocol security audits, TVL stability, smart contract risk, and historical volatility. Low-risk options include established lending protocols. Higher APY usually means higher risk. I always explain the risks before recommending anything.",
+  steldex:
+    "For liquidity provision, farming, and limit orders I route you to StelDex, a Soroban-based exchange I've integrated on Stellar Testnet. Head to the StelDex tab to swap, add liquidity, stake LP tokens into farms for STELLAR rewards, claim, unstake, or place limit orders — all signed with Freighter and settled on-chain in real time.",
 };
 
 const SEND_INTENT_RE =
@@ -93,6 +95,18 @@ function getAiResponse(content: string): { text: string; action: ChatAction | nu
   }
   if (lower.includes("swap") || lower.includes("exchange") || lower.includes("convert")) {
     return { text: AI_RESPONSES.swap, action: null };
+  }
+  if (
+    lower.includes("stake") ||
+    lower.includes("farm") ||
+    lower.includes("unstake") ||
+    lower.includes("claim") ||
+    lower.includes("add liquidity") ||
+    lower.includes("liquidity pool") ||
+    lower.includes("limit order") ||
+    lower.includes("steldex")
+  ) {
+    return { text: AI_RESPONSES.steldex, action: null };
   }
   if (lower.includes("yield") || lower.includes("earn") || lower.includes("apy") || lower.includes("interest")) {
     return { text: AI_RESPONSES.yield, action: null };

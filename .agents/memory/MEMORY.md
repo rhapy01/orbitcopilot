@@ -1,0 +1,2 @@
+- [Zod OpenAPI schemas strip unknown fields](zod-additional-properties.md) — `additionalProperties: true` in OpenAPI does NOT make generated zod schemas passthrough; list every real field explicitly or `.parse()` silently drops it.
+- [Orval codegen naming collisions](orval-codegen-naming.md) — never name a custom OpenAPI schema identically to orval's auto-derived `<OperationId>Response`/`Body` type, or you get TS2308 duplicate export errors.

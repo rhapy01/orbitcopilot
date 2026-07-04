@@ -251,6 +251,247 @@ export interface MarketOverview {
   stellarTvlUsd: number;
 }
 
+export type SteldexContractsTokens = {[key: string]: string};
+
+export type SteldexContractsPoolsItem = { [key: string]: unknown };
+
+export interface SteldexContracts {
+  /** @nullable */
+  factory?: string | null;
+  /** @nullable */
+  router?: string | null;
+  /** @nullable */
+  farm?: string | null;
+  /** @nullable */
+  orders?: string | null;
+  tokens?: SteldexContractsTokens;
+  pools?: SteldexContractsPoolsItem[];
+  contractsReady?: boolean;
+  /** @nullable */
+  sorobanRpc?: string | null;
+  /** @nullable */
+  networkPassphrase?: string | null;
+  /** @nullable */
+  network?: string | null;
+  [key: string]: unknown;
+ }
+
+export interface SteldexPool {
+  /** @nullable */
+  pair?: string | null;
+  /** @nullable */
+  address?: string | null;
+  /** @nullable */
+  token0?: string | null;
+  /** @nullable */
+  token1?: string | null;
+  /** @nullable */
+  symbol0?: string | null;
+  /** @nullable */
+  symbol1?: string | null;
+  [key: string]: unknown;
+ }
+
+export type SteldexFarmPoolFarm = {
+  /** @nullable */
+  weeklyStellar?: string | null;
+  /** @nullable */
+  weeklyStellarHuman?: number | null;
+  /** @nullable */
+  totalStaked?: string | null;
+  /** @nullable */
+  baseAprPercent?: number | null;
+  [key: string]: unknown;
+ };
+
+export interface SteldexFarmPool {
+  /** @nullable */
+  pair?: string | null;
+  /** @nullable */
+  poolContract?: string | null;
+  /** @nullable */
+  token0Symbol?: string | null;
+  /** @nullable */
+  token1Symbol?: string | null;
+  /** @nullable */
+  tvlUsd?: number | null;
+  /** @nullable */
+  lpLiquidity?: string | null;
+  /** @nullable */
+  availableToStake?: string | null;
+  /** @nullable */
+  stakedLiquidity?: string | null;
+  /** @nullable */
+  tickLower?: number | null;
+  /** @nullable */
+  tickUpper?: number | null;
+  farm?: SteldexFarmPoolFarm;
+  [key: string]: unknown;
+ }
+
+export type SteldexFarmPositionStake = { [key: string]: unknown };
+
+export interface SteldexFarmPosition {
+  /** @nullable */
+  poolContract?: string | null;
+  /** @nullable */
+  pair?: string | null;
+  /** @nullable */
+  tickLower?: number | null;
+  /** @nullable */
+  tickUpper?: number | null;
+  stake?: SteldexFarmPositionStake;
+  [key: string]: unknown;
+ }
+
+export interface SteldexOrder {
+  /** @nullable */
+  orderId?: string | null;
+  /** @nullable */
+  pair?: string | null;
+  /** @nullable */
+  status?: string | null;
+  [key: string]: unknown;
+ }
+
+export interface SteldexSwapQuoteInput {
+  fromTokenContract: string;
+  toTokenContract: string;
+  amountIn: string;
+  /** @nullable */
+  slippageBps?: number | null;
+}
+
+export interface SteldexSwapQuoteResult {
+  /** @nullable */
+  amountOut?: string | null;
+  /** @nullable */
+  minAmountOut?: string | null;
+  /** @nullable */
+  priceImpact?: number | null;
+  [key: string]: unknown;
+ }
+
+export interface SteldexTxStep {
+  id?: string;
+  /** @nullable */
+  label?: string | null;
+  /** @nullable */
+  xdr?: string | null;
+  [key: string]: unknown;
+ }
+
+export interface SteldexTxResult {
+  /** @nullable */
+  xdr?: string | null;
+  /** @nullable */
+  steps?: SteldexTxStep[] | null;
+  /** @nullable */
+  sequential?: boolean | null;
+  /** @nullable */
+  resting?: boolean | null;
+  [key: string]: unknown;
+ }
+
+export interface SteldexSwapInput {
+  walletAddress: string;
+  fromTokenContract: string;
+  toTokenContract: string;
+  amountIn: string;
+  /** @nullable */
+  slippageBps?: number | null;
+  /** @nullable */
+  minAmountOut?: string | null;
+  /** @nullable */
+  stepId?: string | null;
+}
+
+export interface SteldexAddLiquidityInput {
+  walletAddress: string;
+  poolContract: string;
+  token0Contract: string;
+  token1Contract: string;
+  tickLower: number;
+  tickUpper: number;
+  amount0Desired: string;
+  amount1Desired: string;
+  /** @nullable */
+  stepId?: string | null;
+}
+
+export interface SteldexRemoveLiquidityInput {
+  walletAddress: string;
+  poolContract: string;
+  tickLower: number;
+  tickUpper: number;
+  liquidity: string;
+  amount0Min: string;
+  amount1Min: string;
+}
+
+export interface SteldexStakeInput {
+  walletAddress: string;
+  poolContract: string;
+  tickLower: number;
+  tickUpper: number;
+  /** @nullable */
+  stakeMax?: boolean | null;
+  /** @nullable */
+  liquidity?: string | null;
+  lockWeeks: number;
+  /** @nullable */
+  autoCompound?: boolean | null;
+  /** @nullable */
+  stepId?: string | null;
+}
+
+export interface SteldexClaimInput {
+  walletAddress: string;
+  poolContract: string;
+  tickLower: number;
+  tickUpper: number;
+}
+
+export interface SteldexUnstakeInput {
+  walletAddress: string;
+  poolContract: string;
+  tickLower: number;
+  tickUpper: number;
+  /** @nullable */
+  unstakeMax?: boolean | null;
+  /** @nullable */
+  liquidity?: string | null;
+  /** @nullable */
+  stepId?: string | null;
+}
+
+export type SteldexLimitOrderInputOrderType = typeof SteldexLimitOrderInputOrderType[keyof typeof SteldexLimitOrderInputOrderType];
+
+
+export const SteldexLimitOrderInputOrderType = {
+  Limit: 'Limit',
+  'Stop-Loss': 'Stop-Loss',
+  'Take-Profit': 'Take-Profit',
+} as const;
+
+export interface SteldexLimitOrderInput {
+  walletAddress: string;
+  fromContract: string;
+  toContract: string;
+  amount: string;
+  limitPrice: string;
+  orderType: SteldexLimitOrderInputOrderType;
+  /** @nullable */
+  expiryHours?: number | null;
+  /** @nullable */
+  stepId?: string | null;
+}
+
+export interface SteldexCancelOrderInput {
+  walletAddress: string;
+  orderId: string;
+}
+
 export type GetWalletParams = {
 /**
  * Stellar public key — when provided fetches real mainnet data; omit for demo testnet account
@@ -270,5 +511,17 @@ export type GetTransactionsParams = {
  * Stellar public key for mainnet lookup
  */
 publicKey?: string;
+};
+
+export type GetSteldexFarmPoolsParams = {
+wallet: string;
+};
+
+export type GetSteldexFarmPositionsParams = {
+wallet: string;
+};
+
+export type GetSteldexOrdersParams = {
+wallet: string;
 };
 
