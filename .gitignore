@@ -47,3 +47,18 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# secrets
+.env
+.env.*
+!.env.example
+
+# local tool binaries
+.tools/
+
+# Rust / Soroban build artifacts
+**/target/
+**/*.wasm
+
+.vercel
+

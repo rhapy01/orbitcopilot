@@ -1,0 +1,18 @@
+{
+  "version": 2,
+  "installCommand": "pnpm install --ignore-scripts",
+  "buildCommand": "pnpm --filter @workspace/api-server run build && pnpm --filter @workspace/orbit-copilot run build",
+  "outputDirectory": "artifacts/orbit-copilot/dist/public",
+  "framework": null,
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api" },
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
+  ],
+  "functions": {
+    "api/index.mjs": {
+      "maxDuration": 60,
+      "memory": 1024,
+      "includeFiles": "{artifacts/api-server/dist/**,api/**}"
+    }
+  }
+}

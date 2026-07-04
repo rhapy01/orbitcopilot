@@ -1,0 +1,27 @@
+# Dependencies (Vercel runs pnpm install itself)
+node_modules
+**/node_modules
+.pnpm-store
+**/.pnpm-store
+
+# Local / build artifacts
+.tools
+.local
+.git
+.agents
+.vercel
+**/dist
+**/target
+contracts
+*.tsbuildinfo
+**/*.tsbuildinfo
+*.wasm
+**/*.wasm
+attached_assets
+
+# Secrets & noise
+.env
+.env.*
+*.log
+*.map
+**/*.map
