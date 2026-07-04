@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, createContext, useContext } from "react";
+import { track } from "@/lib/analytics";
 
 interface FreighterState {
   isInstalled: boolean;
@@ -52,9 +53,13 @@ export function FreighterProvider({ children }: { children: React.ReactNode }) {
           if (!addrResult.error && addrResult.address) {
             const netResult = await freighter.getNetworkDetails();
             setPublicKey(addrResult.address);
-            setNetwork(netResult.networkPassphrase?.includes("Test") ? "Testnet" : "Mainnet");
+            const isTestnet = Boolean(netResult.networkPassphrase?.includes("Test"));
+            setNetwork(isTestnet ? "Testnet" : netResult.network ?? "Unknown");
             setNetworkPassphrase(netResult.networkPassphrase ?? null);
             setIsConnected(true);
+            if (!isTestnet) {
+              console.warn("Orbit is testnet-only. Switch Freighter to Testnet.");
+            }
           }
         }
       } catch {
@@ -76,23 +81,38 @@ export function FreighterProvider({ children }: { children: React.ReactNode }) {
       if (addrResult.error) throw new Error(addrResult.error.message);
 
       const netResult = await freighter.getNetworkDetails();
+      const isTestnet = Boolean(netResult.networkPassphrase?.includes("Test"));
       setPublicKey(addrResult.address);
-      setNetwork(netResult.networkPassphrase?.includes("Test") ? "Testnet" : "Mainnet");
+      setNetwork(isTestnet ? "Testnet" : netResult.network ?? "Unknown");
       setNetworkPassphrase(netResult.networkPassphrase ?? null);
       setIsConnected(true);
+      track("wallet_connect", {
+        walletPublicKey: addrResult.address,
+        metadata: { network: isTestnet ? "testnet" : netResult.network },
+      });
+      if (!isTestnet) {
+        console.warn("Orbit is testnet-only. Switch Freighter to Testnet.");
+      }
     } catch (err) {
       console.error("Freighter connect error:", err);
+      track("error", {
+        metadata: {
+          source: "freighter_connect",
+          message: err instanceof Error ? err.message : "connect failed",
+        },
+      });
     } finally {
       setConnecting(false);
     }
   }, []);
 
   const disconnect = useCallback(() => {
+    track("wallet_disconnect", { walletPublicKey: publicKey });
     setPublicKey(null);
     setNetwork(null);
     setNetworkPassphrase(null);
     setIsConnected(false);
-  }, []);
+  }, [publicKey]);
 
   const signTransaction = useCallback(
     async (xdr: string, passphrase: string): Promise<string> => {
