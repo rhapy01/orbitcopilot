@@ -14,7 +14,6 @@ import DefiPage from "@/pages/defi";
 import AssetsPage from "@/pages/assets";
 import SettingsPage from "@/pages/settings";
 import PlatformsPage from "@/pages/platforms";
-import SteldexPage from "@/pages/steldex";
 
 const queryClient = new QueryClient();
 
@@ -28,7 +27,6 @@ function Router() {
         <Route path="/defi" component={DefiPage} />
         <Route path="/assets" component={AssetsPage} />
         <Route path="/platforms" component={PlatformsPage} />
-        <Route path="/steldex" component={SteldexPage} />
         <Route path="/settings" component={SettingsPage} />
         <Route component={NotFound} />
       </Switch>

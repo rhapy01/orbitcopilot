@@ -1,6 +1,6 @@
 import React from "react";
 import { Link, useLocation } from "wouter";
-import { MessageSquare, PieChart, WalletCards, Sprout, Search, Settings, Orbit, LayoutGrid, ArrowRightLeft } from "lucide-react";
+import { MessageSquare, PieChart, WalletCards, Sprout, Search, Settings, Orbit, LayoutGrid } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const navItems = [
@@ -10,7 +10,6 @@ const navItems = [
   { href: "/defi", label: "Earn", icon: Sprout },
   { href: "/assets", label: "Markets", icon: Search },
   { href: "/platforms", label: "Ecosystem", icon: LayoutGrid },
-  { href: "/steldex", label: "StelDex", icon: ArrowRightLeft },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 

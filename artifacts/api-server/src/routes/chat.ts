@@ -8,6 +8,7 @@ import {
   DeleteChatMessageParams,
   ClearChatHistoryResponse,
 } from "@workspace/api-zod";
+import { getSteldexPools } from "../lib/steldex";
 
 const router: IRouter = Router();
 
@@ -26,49 +27,124 @@ const AI_RESPONSES: Record<string, string> = {
     "Your portfolio is looking healthy! You're up 3.2% in the last 24 hours. Your largest holding is USDC at 45% of your portfolio, followed by XLM at 30%. Want me to suggest some rebalancing strategies or yield opportunities for your idle USDC?",
   risk:
     "Risk assessment is important in DeFi. I evaluate opportunities based on protocol security audits, TVL stability, smart contract risk, and historical volatility. Low-risk options include established lending protocols. Higher APY usually means higher risk. I always explain the risks before recommending anything.",
-  steldex:
-    "For liquidity provision, farming, and limit orders I route you to StelDex, a Soroban-based exchange I've integrated on Stellar Testnet. Head to the StelDex tab to swap, add liquidity, stake LP tokens into farms for STELLAR rewards, claim, unstake, or place limit orders — all signed with Freighter and settled on-chain in real time.",
+  steldexHelp:
+    "I can route liquidity, farming, and limit-order requests through StelDex, a Soroban DEX on Stellar Testnet. Try: \"add liquidity 10 XLM and 10 pUSDC to XLM/pUSDC\", \"stake my XLM/pUSDC LP\", \"claim rewards from XLM/pUSDC\", or \"unstake XLM/pUSDC\".",
+  steldexPoolNotFound:
+    "I couldn't find that pool on StelDex. Ask me for a pair like XLM/pUSDC, XLM/cUSDC, EURC/XLM, or STELLAR/XLM.",
 };
 
 const SEND_INTENT_RE =
   /\b(?:send|transfer|pay)\s+([\d.]+)\s*([a-zA-Z]{2,12})\s+to\s+(G[A-Z2-7]{55})\b/i;
 const SWAP_INTENT_RE =
   /\b(?:swap|exchange|convert)\s+([\d.]+)\s*([a-zA-Z]{2,12})\s+(?:to|for|into)\s+([a-zA-Z]{2,12})\b/i;
+const STELDEX_STAKE_RE = /\bstake\b(?:.*?)\b([a-zA-Z]{2,10})\s*\/\s*([a-zA-Z]{2,10})\b/i;
+const STELDEX_UNSTAKE_RE = /\bunstake\b(?:.*?)\b([a-zA-Z]{2,10})\s*\/\s*([a-zA-Z]{2,10})\b/i;
+const STELDEX_CLAIM_RE = /\bclaim\b(?:.*?)\b([a-zA-Z]{2,10})\s*\/\s*([a-zA-Z]{2,10})\b/i;
+const STELDEX_ADD_LIQUIDITY_RE =
+  /\badd\s+liquidity\s+([\d.]+)\s*([a-zA-Z]{2,10})\s+and\s+([\d.]+)\s*([a-zA-Z]{2,10})/i;
 
 const SUPPORTED_ASSETS = ["XLM", "USDC", "AQUA", "yXLM", "EURC"];
+const STELDEX_ONLY_ASSETS = ["PUSDC", "CUSDC", "STELLAR"];
 
 interface ChatAction {
-  type: "send" | "swap";
-  sendAmount: string;
-  sendAsset: string;
+  type: "send" | "swap" | "steldex_swap" | "steldex_stake" | "steldex_claim" | "steldex_unstake" | "steldex_add_liquidity";
+  sendAmount?: string;
+  sendAsset?: string;
   destination?: string;
   destAsset?: string;
+  poolContract?: string;
+  pair?: string;
+  amountB?: string;
 }
 
-function parseIntentAction(content: string): ChatAction | null {
+async function findSteldexPool(
+  symbolA: string,
+  symbolB: string
+): Promise<{ poolContract: string; pair: string } | null> {
+  const pools = await getSteldexPools();
+  const a = symbolA.toUpperCase();
+  const b = symbolB.toUpperCase();
+  const match = pools.find((p: any) => {
+    const s0 = String(p.symbol0 ?? "").toUpperCase();
+    const s1 = String(p.symbol1 ?? "").toUpperCase();
+    return (s0 === a && s1 === b) || (s0 === b && s1 === a);
+  }) as any;
+  if (!match) return null;
+  return { poolContract: match.address, pair: match.pair };
+}
+
+async function parseIntentAction(content: string): Promise<ChatAction | null> {
   const sendMatch = content.match(SEND_INTENT_RE);
   if (sendMatch) {
     const [, amount, asset, destination] = sendMatch;
     return { type: "send", sendAmount: amount, sendAsset: asset.toUpperCase(), destination };
   }
 
+  const addLiqMatch = content.match(STELDEX_ADD_LIQUIDITY_RE);
+  if (addLiqMatch) {
+    const [, amountA, symbolA, amountB, symbolB] = addLiqMatch;
+    const pool = await findSteldexPool(symbolA, symbolB);
+    if (!pool) return { type: "steldex_add_liquidity" };
+    return {
+      type: "steldex_add_liquidity",
+      sendAmount: amountA,
+      sendAsset: symbolA.toUpperCase(),
+      amountB,
+      destAsset: symbolB.toUpperCase(),
+      poolContract: pool.poolContract,
+      pair: pool.pair,
+    };
+  }
+
+  const stakeMatch = content.match(STELDEX_STAKE_RE);
+  if (stakeMatch) {
+    const [, symbolA, symbolB] = stakeMatch;
+    const pool = await findSteldexPool(symbolA, symbolB);
+    if (!pool) return { type: "steldex_stake" };
+    return { type: "steldex_stake", poolContract: pool.poolContract, pair: pool.pair };
+  }
+
+  const unstakeMatch = content.match(STELDEX_UNSTAKE_RE);
+  if (unstakeMatch) {
+    const [, symbolA, symbolB] = unstakeMatch;
+    const pool = await findSteldexPool(symbolA, symbolB);
+    if (!pool) return { type: "steldex_unstake" };
+    return { type: "steldex_unstake", poolContract: pool.poolContract, pair: pool.pair };
+  }
+
+  const claimMatch = content.match(STELDEX_CLAIM_RE);
+  if (claimMatch) {
+    const [, symbolA, symbolB] = claimMatch;
+    const pool = await findSteldexPool(symbolA, symbolB);
+    if (!pool) return { type: "steldex_claim" };
+    return { type: "steldex_claim", poolContract: pool.poolContract, pair: pool.pair };
+  }
+
   const swapMatch = content.match(SWAP_INTENT_RE);
   if (swapMatch) {
     const [, amount, fromAsset, toAsset] = swapMatch;
+    const from = fromAsset.toUpperCase();
+    const to = toAsset.toUpperCase();
+    const isSteldex = STELDEX_ONLY_ASSETS.includes(from) || STELDEX_ONLY_ASSETS.includes(to);
     return {
-      type: "swap",
+      type: isSteldex ? "steldex_swap" : "swap",
       sendAmount: amount,
-      sendAsset: fromAsset.toUpperCase(),
-      destAsset: toAsset.toUpperCase(),
+      sendAsset: from,
+      destAsset: to,
     };
   }
 
   return null;
 }
 
-function getAiResponse(content: string): { text: string; action: ChatAction | null } {
+async function getAiResponse(content: string): Promise<{ text: string; action: ChatAction | null }> {
   const lower = content.toLowerCase();
-  const action = parseIntentAction(content);
+  let action: ChatAction | null;
+  try {
+    action = await parseIntentAction(content);
+  } catch {
+    action = null;
+  }
 
   if (action?.type === "send") {
     return {
@@ -78,7 +154,7 @@ function getAiResponse(content: string): { text: string; action: ChatAction | nu
   }
 
   if (action?.type === "swap") {
-    if (!SUPPORTED_ASSETS.includes(action.sendAsset) || !SUPPORTED_ASSETS.includes(action.destAsset!)) {
+    if (!SUPPORTED_ASSETS.includes(action.sendAsset!) || !SUPPORTED_ASSETS.includes(action.destAsset!)) {
       return {
         text: `I can swap between these assets right now: ${SUPPORTED_ASSETS.join(", ")}. Try something like "Swap 50 XLM to USDC".`,
         action: null,
@@ -86,6 +162,53 @@ function getAiResponse(content: string): { text: string; action: ChatAction | nu
     }
     return {
       text: `I found a route on the Stellar DEX to swap ${action.sendAmount} ${action.sendAsset} for ${action.destAsset}. Review the quote below and sign with Freighter to execute the swap.`,
+      action,
+    };
+  }
+
+  if (action?.type === "steldex_swap") {
+    return {
+      text: `${action.sendAsset} and ${action.destAsset} trade on StelDex, a Soroban DEX on Stellar Testnet. I found a route to swap ${action.sendAmount} ${action.sendAsset} for ${action.destAsset} there — review below and sign with Freighter (make sure it's set to Testnet).`,
+      action,
+    };
+  }
+
+  if (action?.type === "steldex_add_liquidity") {
+    if (!action.poolContract) {
+      return { text: AI_RESPONSES.steldexPoolNotFound, action: null };
+    }
+    return {
+      text: `Ready to add ${action.sendAmount} ${action.sendAsset} and ${action.amountB} ${action.destAsset} to the ${action.pair} pool on StelDex. Review and sign with Freighter (Testnet) to submit on-chain.`,
+      action,
+    };
+  }
+
+  if (action?.type === "steldex_stake") {
+    if (!action.poolContract) {
+      return { text: AI_RESPONSES.steldexPoolNotFound, action: null };
+    }
+    return {
+      text: `I'll stake your available ${action.pair} LP tokens into the StelDex farm for STELLAR rewards. Sign with Freighter (Testnet) to confirm on-chain.`,
+      action,
+    };
+  }
+
+  if (action?.type === "steldex_claim") {
+    if (!action.poolContract) {
+      return { text: AI_RESPONSES.steldexPoolNotFound, action: null };
+    }
+    return {
+      text: `I'll claim your pending STELLAR farm rewards from the ${action.pair} pool on StelDex. Sign with Freighter (Testnet) to confirm on-chain.`,
+      action,
+    };
+  }
+
+  if (action?.type === "steldex_unstake") {
+    if (!action.poolContract) {
+      return { text: AI_RESPONSES.steldexPoolNotFound, action: null };
+    }
+    return {
+      text: `I'll unstake your ${action.pair} LP tokens from the StelDex farm. Sign with Freighter (Testnet) to confirm on-chain.`,
       action,
     };
   }
@@ -106,7 +229,7 @@ function getAiResponse(content: string): { text: string; action: ChatAction | nu
     lower.includes("limit order") ||
     lower.includes("steldex")
   ) {
-    return { text: AI_RESPONSES.steldex, action: null };
+    return { text: AI_RESPONSES.steldexHelp, action: null };
   }
   if (lower.includes("yield") || lower.includes("earn") || lower.includes("apy") || lower.includes("interest")) {
     return { text: AI_RESPONSES.yield, action: null };
@@ -147,7 +270,7 @@ router.post("/chat/messages", async (req, res): Promise<void> => {
     metadata: null,
   });
 
-  const { text: aiContent, action } = getAiResponse(parsed.data.content);
+  const { text: aiContent, action } = await getAiResponse(parsed.data.content);
 
   const [aiMessage] = await db
     .insert(chatMessagesTable)
