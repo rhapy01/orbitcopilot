@@ -6,15 +6,33 @@ import portfolioRouter from "./portfolio";
 import defiRouter from "./defi";
 import assetsRouter from "./assets";
 import steldexRouter from "./steldex";
+import soroswapRouter from "./soroswap";
+import aquariusRouter from "./aquarius";
+import blendRouter from "./blend";
+import reflectorRouter from "./reflector";
+import friendbotRouter from "./friendbot";
+import protocolsRouter from "./protocols";
+import predictRouter from "./predict";
+import perpsRouter from "./perps";
+import productRouter from "./product";
 
 const router: IRouter = Router();
 
 router.use(healthRouter);
+router.use(productRouter);
 router.use(chatRouter);
 router.use(walletRouter);
 router.use(portfolioRouter);
 router.use(defiRouter);
 router.use(assetsRouter);
 router.use(steldexRouter);
+router.use(soroswapRouter);
+router.use(aquariusRouter);
+router.use(blendRouter);
+router.use(reflectorRouter);
+router.use(friendbotRouter);
+router.use(protocolsRouter);
+router.use(predictRouter);
+router.use(perpsRouter);
 
 export default router;
