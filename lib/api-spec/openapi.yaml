@@ -41,7 +41,14 @@ paths:
     get:
       operationId: getChatMessages
       tags: [chat]
-      summary: Get chat history
+      summary: Get chat history (wallet-scoped when wallet is provided)
+      parameters:
+        - name: wallet
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Stellar G… public key — returns only that wallet's messages
       responses:
         "200":
           description: List of chat messages
@@ -106,7 +113,7 @@ paths:
         - name: publicKey
           in: query
           required: false
-          description: Stellar public key — when provided fetches real mainnet data; omit for demo testnet account
+          description: Stellar public key — when provided fetches testnet wallet data; omit for demo testnet account
           schema:
             type: string
       responses:
@@ -126,7 +133,7 @@ paths:
         - name: publicKey
           in: query
           required: false
-          description: Stellar public key for mainnet lookup
+          description: Stellar public key for testnet lookup
           schema:
             type: string
       responses:
@@ -148,7 +155,7 @@ paths:
         - name: publicKey
           in: query
           required: false
-          description: Stellar public key for mainnet lookup
+          description: Stellar public key for testnet lookup
           schema:
             type: string
       responses:
@@ -201,11 +208,37 @@ paths:
               schema:
                 $ref: "#/components/schemas/SubmitTransactionResult"
 
+  /portfolio/unified:
+    get:
+      operationId: getUnifiedPortfolio
+      tags: [portfolio]
+      summary: Unified testnet portfolio (Horizon, Soroswap, StelDex, Blend)
+      parameters:
+        - name: publicKey
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Unified portfolio payload
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+
   /portfolio/summary:
     get:
       operationId: getPortfolioSummary
       tags: [portfolio]
       summary: Portfolio overview — totals, allocation, performance
+      parameters:
+        - name: publicKey
+          in: query
+          required: false
+          schema:
+            type: string
       responses:
         "200":
           description: Portfolio summary
@@ -632,6 +665,7 @@ components:
           minLength: 1
         context:
           type: ["string", "null"]
+          description: Connected wallet public key (G…) so the copilot can read balances and prepare txs
       required: [content]
 
     Wallet:

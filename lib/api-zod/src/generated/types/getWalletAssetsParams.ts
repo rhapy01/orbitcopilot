@@ -8,7 +8,7 @@
 
 export type GetWalletAssetsParams = {
 /**
- * Stellar public key for mainnet lookup
+ * Stellar public key for testnet lookup
  */
 publicKey?: string;
 };

@@ -494,21 +494,21 @@ export interface SteldexCancelOrderInput {
 
 export type GetWalletParams = {
 /**
- * Stellar public key — when provided fetches real mainnet data; omit for demo testnet account
+ * Stellar public key — when provided fetches testnet wallet data; omit for demo testnet account
  */
 publicKey?: string;
 };
 
 export type GetWalletAssetsParams = {
 /**
- * Stellar public key for mainnet lookup
+ * Stellar public key for testnet lookup
  */
 publicKey?: string;
 };
 
 export type GetTransactionsParams = {
 /**
- * Stellar public key for mainnet lookup
+ * Stellar public key for testnet lookup
  */
 publicKey?: string;
 };

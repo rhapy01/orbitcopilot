@@ -8,7 +8,7 @@
 
 export type GetWalletParams = {
 /**
- * Stellar public key — when provided fetches real mainnet data; omit for demo testnet account
+ * Stellar public key — when provided fetches testnet wallet data; omit for demo testnet account
  */
 publicKey?: string;
 };
