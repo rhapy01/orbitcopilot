@@ -3,17 +3,23 @@ import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { ArrowUp, Plus, Loader2, Sparkles } from "lucide-react";
 import { TransactionActionCard, type ChatAction } from "@/components/transaction-action-card";
 import { OnboardingChecklist } from "@/components/onboarding-checklist";
+import { IdleCoach, idleSnapshot } from "@/components/idle-coach";
 import { useFreighter } from "@/hooks/use-freighter";
 import { Layout, type SidebarAction } from "@/components/layout";
 import { track } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
 
 const QUICK_ACTIONS = [
-  { label: "Portfolio", prompt: "What's in my portfolio?" },
   { label: "What's earning?", prompt: "What's earning?" },
   { label: "Rebalance", prompt: "Rebalance my positions" },
-  { label: "Prediction markets", prompt: "Show prediction markets" },
+  { label: "Portfolio", prompt: "What's in my portfolio?" },
 ];
+
+function looksLikeIntent(text: string): boolean {
+  return /\b(earn|idle|rebalance|supply|liquidity|fund|stake|deploy|portfolio)\b/i.test(
+    text
+  );
+}
 
 type ChatMessage = {
   id: number;
@@ -60,13 +66,32 @@ function mergeMessages(...lists: ChatMessage[][]): ChatMessage[] {
 
 export default function ChatPage() {
   const queryClient = useQueryClient();
-  const { publicKey } = useFreighter();
+  const { publicKey, isConnected } = useFreighter();
   const chatKey = ["chat-messages", publicKey ?? "anon"] as const;
+  const coachKey = ["portfolio-coach", publicKey ?? "anon"] as const;
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [sessionMessages, setSessionMessages] = useState<ChatMessage[]>([]);
   const [pendingUser, setPendingUser] = useState<ChatMessage | null>(null);
   const [input, setInput] = useState("");
+  const [beforeIdle, setBeforeIdle] = useState<string | null>(null);
+
+  const { data: coach } = useQuery({
+    queryKey: coachKey,
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/portfolio/coach?publicKey=${encodeURIComponent(publicKey!)}`
+      );
+      if (!res.ok) return null;
+      return res.json();
+    },
+    enabled: Boolean(publicKey),
+    staleTime: 15_000,
+  });
+
+  useEffect(() => {
+    setBeforeIdle(idleSnapshot(coach ?? undefined));
+  }, [coach]);
 
   const {
     data: serverMessages = [],
@@ -128,6 +153,13 @@ export default function ChatPage() {
         walletPublicKey: publicKey,
         metadata: { length: content.length },
       });
+      if (publicKey && looksLikeIntent(content)) {
+        void fetch("/api/portfolio/intent", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ publicKey, intent: content }),
+        }).catch(() => {});
+      }
       const userMessage: ChatMessage = {
         id: ctx?.tempId ?? -Date.now(),
         role: "user",
@@ -140,6 +172,7 @@ export default function ChatPage() {
       queryClient.invalidateQueries({
         queryKey: ["chat-sessions", publicKey ?? "anon"],
       });
+      queryClient.invalidateQueries({ queryKey: coachKey });
     },
     onError: (err) => {
       setPendingUser(null);
@@ -192,6 +225,17 @@ export default function ChatPage() {
       }
     },
     [sendMutation]
+  );
+
+  const onTxOutcome = useCallback(
+    (_info: { hash: string | null; summary: string }) => {
+      queryClient.invalidateQueries({ queryKey: coachKey });
+      // Nudge user to verify earning state on-chain
+      setTimeout(() => {
+        handleSend("What's earning?");
+      }, 400);
+    },
+    [queryClient, coachKey, handleSend]
   );
 
   const onSidebarAction = useCallback(
@@ -296,23 +340,34 @@ export default function ChatPage() {
           </p>
         </div>
       ) : isEmpty ? (
-        <div className="flex flex-1 flex-col items-center justify-center bg-orbit-gradient-subtle px-3 pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:px-4 sm:pb-8">
-          <div className="mb-6 flex flex-col items-center px-2 text-center sm:mb-10">
-            <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-orbit-gradient shadow-lg shadow-primary/25 sm:mb-5 sm:h-14 sm:w-14">
-              <Sparkles className="h-6 w-6 text-white sm:h-7 sm:w-7" />
+        <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto bg-orbit-gradient-subtle px-3 pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:px-4 sm:pb-8">
+          {isConnected && publicKey ? (
+            <div className="mb-4 w-full px-1">
+              <IdleCoach publicKey={publicKey} onAction={handleSend} />
             </div>
-            <h1 className="text-[22px] font-semibold tracking-tight sm:text-[32px]">
-              <span className="text-orbit-gradient">What&apos;s on your mind today?</span>
-            </h1>
-          </div>
+          ) : (
+            <>
+              <div className="mb-6 flex flex-col items-center px-2 text-center sm:mb-8">
+                <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-orbit-gradient shadow-lg shadow-primary/25 sm:h-14 sm:w-14">
+                  <Sparkles className="h-6 w-6 text-white sm:h-7 sm:w-7" />
+                </div>
+                <h1 className="text-[22px] font-semibold tracking-tight sm:text-[28px]">
+                  <span className="text-orbit-gradient">Put idle capital to work</span>
+                </h1>
+                <p className="mt-2 max-w-sm text-sm text-muted-foreground">
+                  Connect Freighter on Testnet. Orbit shows what&apos;s idle and one move to start earning on-chain.
+                </p>
+              </div>
+              <div className="mb-4 w-full max-w-md px-1">
+                <OnboardingChecklist
+                  hasChatted={messages.length > 0}
+                  onFund={() => handleSend("Fund my wallet")}
+                />
+              </div>
+            </>
+          )}
           <div className="w-full max-w-3xl">{composer}</div>
-          <div className="mt-4 w-full max-w-md px-1">
-            <OnboardingChecklist
-              hasChatted={messages.length > 0}
-              onFund={() => handleSend("Fund my wallet")}
-            />
-          </div>
-          <div className="mt-3 flex w-full max-w-3xl flex-wrap items-center justify-center gap-2 px-3 sm:mt-4 sm:px-4">
+          <div className="mt-3 flex w-full max-w-3xl flex-wrap items-center justify-center gap-2 px-3 sm:px-4">
             {QUICK_ACTIONS.map((item) => (
               <button
                 key={item.label}
@@ -360,7 +415,11 @@ export default function ChatPage() {
                       </div>
                       {action && (
                         <div className="mt-2 w-full max-w-sm">
-                          <TransactionActionCard action={action} />
+                          <TransactionActionCard
+                            action={action}
+                            beforeIdle={beforeIdle}
+                            onOutcome={onTxOutcome}
+                          />
                         </div>
                       )}
                     </div>

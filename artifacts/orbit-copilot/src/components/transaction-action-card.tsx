@@ -21,6 +21,7 @@ import {
   type SteldexWriteEndpoint,
 } from "@/lib/steldex-submit";
 import { track } from "@/lib/analytics";
+import { actionConfidence, outcomeSummary } from "@/lib/action-confidence";
 
 export interface ChatAction {
   type:
@@ -264,7 +265,16 @@ function buildSteldexBody(action: ChatAction): Record<string, unknown> {
   }
 }
 
-export function TransactionActionCard({ action }: { action: ChatAction }) {
+export function TransactionActionCard({
+  action,
+  beforeIdle,
+  onOutcome,
+}: {
+  action: ChatAction;
+  /** Snapshot of idle capital before this action (for outcome copy). */
+  beforeIdle?: string | null;
+  onOutcome?: (info: { hash: string | null; summary: string }) => void;
+}) {
   const { isConnected, publicKey, connect, connecting, signTransaction } = useFreighter();
   const buildMutation = useBuildTransaction();
   const submitMutation = useSubmitTransaction();
@@ -274,7 +284,9 @@ export function TransactionActionCard({ action }: { action: ChatAction }) {
   const [error, setError] = useState<string | null>(null);
   const [hash, setHash] = useState<string | null>(null);
   const [estimatedDest, setEstimatedDest] = useState<string | null>(null);
+  const [outcomeLine, setOutcomeLine] = useState<string | null>(null);
   const trackedStatus = useRef<Status>("idle");
+  const confidence = actionConfidence(action);
 
   useEffect(() => {
     if (trackedStatus.current === status) return;
@@ -289,13 +301,29 @@ export function TransactionActionCard({ action }: { action: ChatAction }) {
         walletPublicKey: publicKey,
         metadata: { actionType: action.type, txHash: hash },
       });
+      const summary = outcomeSummary(action);
+      setOutcomeLine(summary);
+      if (publicKey) {
+        void fetch("/api/portfolio/outcome", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            publicKey,
+            summary,
+            txHash: hash,
+            beforeIdle: beforeIdle ?? null,
+            afterNote: "Portfolio cache refreshed — ask what's earning to verify on-chain.",
+          }),
+        }).catch(() => {});
+      }
+      onOutcome?.({ hash, summary });
     } else if (status === "error") {
       track("error", {
         walletPublicKey: publicKey,
         metadata: { source: "tx", actionType: action.type, message: error },
       });
     }
-  }, [status, publicKey, action.type, hash, error]);
+  }, [status, publicKey, action.type, hash, error, action, beforeIdle, onOutcome]);
 
   const handleExecute = async () => {
     if (!publicKey) return;
@@ -590,14 +618,38 @@ export function TransactionActionCard({ action }: { action: ChatAction }) {
           <span>Network</span>
           <span className="text-foreground">Stellar Testnet</span>
         </div>
+        <div className="flex justify-between gap-2">
+          <span>Protocol</span>
+          <span className="font-medium text-foreground text-right">{confidence.protocol}</span>
+        </div>
       </div>
 
+      {status !== "success" && status !== "error" && (
+        <div className="rounded-xl bg-orbit-gradient-subtle px-3 py-2.5 text-[11px] leading-relaxed text-muted-foreground ring-1 ring-primary/10">
+          <p className="mb-1.5 font-medium text-foreground">Before you sign</p>
+          <p className="mb-1.5 text-foreground/80">{confidence.walletScope}</p>
+          <ul className="list-disc space-y-0.5 pl-4">
+            {confidence.risks.slice(0, 4).map((r) => (
+              <li key={r}>{r}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {status === "success" ? (
-        <div className="space-y-2">
-          <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-500">
-            <CheckCircle2 className="w-4 h-4" />
-            Transaction confirmed
+        <div className="space-y-2 rounded-xl border border-primary/20 bg-orbit-gradient-subtle p-3">
+          <div className="flex items-center gap-2 text-sm font-medium text-green-600 dark:text-green-500">
+            <CheckCircle2 className="w-4 h-4 shrink-0" />
+            Done on-chain
           </div>
+          {outcomeLine && (
+            <p className="text-sm text-foreground">{outcomeLine}</p>
+          )}
+          {beforeIdle && (
+            <p className="text-xs text-muted-foreground">
+              Before: idle {beforeIdle}. Ask “What&apos;s earning?” to see the updated position book.
+            </p>
+          )}
           {hash && (
             <a
               href={steldexExplorerTxUrl(hash)}
