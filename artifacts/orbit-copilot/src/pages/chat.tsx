@@ -1,4 +1,11 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import {
+  useState,
+  useRef,
+  useEffect,
+  useCallback,
+  useMemo,
+  type ReactNode,
+} from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { ArrowUp, Plus, Loader2, Sparkles } from "lucide-react";
 import { TransactionActionCard, type ChatAction } from "@/components/transaction-action-card";
@@ -266,6 +273,20 @@ export default function ChatPage() {
     messages.length === 0 &&
     !sendMutation.isPending;
 
+  /** Connected wallets always use the chat thread (coach is an assistant reply). */
+  const showThread = Boolean(isConnected && publicKey) || !isEmpty;
+
+  const assistantShell = (body: ReactNode, key?: string) => (
+    <div key={key} className="flex w-full flex-col items-start">
+      <div className="mb-1.5 flex h-7 w-7 items-center justify-center rounded-lg bg-orbit-gradient">
+        <Sparkles className="h-3.5 w-3.5 text-white" />
+      </div>
+      <div className="max-w-[92%] rounded-2xl bg-card px-3.5 py-3 text-foreground ring-1 ring-primary/10 sm:max-w-[85%] sm:px-4">
+        {body}
+      </div>
+    </div>
+  );
+
   const composer = (
     <div className="mx-auto w-full max-w-3xl px-3 sm:px-4">
       <form
@@ -339,33 +360,25 @@ export default function ChatPage() {
             or set DATABASE_URL and REDIS_URL in production.
           </p>
         </div>
-      ) : isEmpty ? (
+      ) : !showThread ? (
         <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto bg-orbit-gradient-subtle px-3 pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:px-4 sm:pb-8">
-          {isConnected && publicKey ? (
-            <div className="mb-4 w-full px-1">
-              <IdleCoach publicKey={publicKey} onAction={handleSend} />
+          <div className="mb-6 flex flex-col items-center px-2 text-center sm:mb-8">
+            <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-orbit-gradient shadow-lg shadow-primary/25 sm:h-14 sm:w-14">
+              <Sparkles className="h-6 w-6 text-white sm:h-7 sm:w-7" />
             </div>
-          ) : (
-            <>
-              <div className="mb-6 flex flex-col items-center px-2 text-center sm:mb-8">
-                <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-orbit-gradient shadow-lg shadow-primary/25 sm:h-14 sm:w-14">
-                  <Sparkles className="h-6 w-6 text-white sm:h-7 sm:w-7" />
-                </div>
-                <h1 className="text-[22px] font-semibold tracking-tight sm:text-[28px]">
-                  <span className="text-orbit-gradient">Put idle capital to work</span>
-                </h1>
-                <p className="mt-2 max-w-sm text-sm text-muted-foreground">
-                  Connect Freighter on Testnet. Orbit shows what&apos;s idle and one move to start earning on-chain.
-                </p>
-              </div>
-              <div className="mb-4 w-full max-w-md px-1">
-                <OnboardingChecklist
-                  hasChatted={messages.length > 0}
-                  onFund={() => handleSend("Fund my wallet")}
-                />
-              </div>
-            </>
-          )}
+            <h1 className="text-[22px] font-semibold tracking-tight sm:text-[28px]">
+              <span className="text-orbit-gradient">Put idle capital to work</span>
+            </h1>
+            <p className="mt-2 max-w-sm text-sm text-muted-foreground">
+              Connect Freighter on Testnet. Orbit replies in chat with what&apos;s idle and one move to earn.
+            </p>
+          </div>
+          <div className="mb-4 w-full max-w-md px-1">
+            <OnboardingChecklist
+              hasChatted={messages.length > 0}
+              onFund={() => handleSend("Fund my wallet")}
+            />
+          </div>
           <div className="w-full max-w-3xl">{composer}</div>
           <div className="mt-3 flex w-full max-w-3xl flex-wrap items-center justify-center gap-2 px-3 sm:px-4">
             {QUICK_ACTIONS.map((item) => (
@@ -384,47 +397,58 @@ export default function ChatPage() {
         <>
           <div ref={scrollRef} className="flex-1 overflow-y-auto overscroll-contain">
             <div className="mx-auto w-full max-w-3xl space-y-4 px-3 py-4 sm:space-y-6 sm:px-4 sm:py-6">
-              {isLoading && messages.length === 0 ? (
+              {isLoading && messages.length === 0 && !publicKey ? (
                 <div className="space-y-4">
                   <div className="h-12 w-2/3 animate-pulse rounded-2xl bg-primary/10" />
                   <div className="ml-auto h-12 w-1/2 animate-pulse rounded-2xl bg-orbit-gradient-subtle ring-1 ring-primary/20" />
                 </div>
               ) : (
-                messages.map((msg) => {
-                  const action = msg.metadata?.action ?? null;
-                  const isUser = msg.role === "user";
-                  return (
-                    <div
-                      key={msg.id}
-                      className={cn("flex w-full flex-col", isUser ? "items-end" : "items-start")}
-                    >
-                      {!isUser && (
-                        <div className="mb-1.5 flex h-7 w-7 items-center justify-center rounded-lg bg-orbit-gradient">
-                          <Sparkles className="h-3.5 w-3.5 text-white" />
-                        </div>
-                      )}
+                <>
+                  {publicKey &&
+                    assistantShell(
+                      <IdleCoach publicKey={publicKey} onAction={handleSend} />,
+                      "coach-reply"
+                    )}
+
+                  {messages.map((msg) => {
+                    const action = msg.metadata?.action ?? null;
+                    const isUser = msg.role === "user";
+                    return (
                       <div
+                        key={msg.id}
                         className={cn(
-                          "max-w-[92%] whitespace-pre-wrap break-words text-[15px] leading-7 sm:max-w-[75%]",
-                          isUser
-                            ? "rounded-[22px] bg-orbit-gradient px-3.5 py-2.5 text-white shadow-md shadow-primary/20 sm:px-4"
-                            : "rounded-2xl bg-card px-3.5 py-3 text-foreground ring-1 ring-primary/10 sm:px-4"
+                          "flex w-full flex-col",
+                          isUser ? "items-end" : "items-start"
                         )}
                       >
-                        {msg.content}
-                      </div>
-                      {action && (
-                        <div className="mt-2 w-full max-w-sm">
-                          <TransactionActionCard
-                            action={action}
-                            beforeIdle={beforeIdle}
-                            onOutcome={onTxOutcome}
-                          />
+                        {!isUser && (
+                          <div className="mb-1.5 flex h-7 w-7 items-center justify-center rounded-lg bg-orbit-gradient">
+                            <Sparkles className="h-3.5 w-3.5 text-white" />
+                          </div>
+                        )}
+                        <div
+                          className={cn(
+                            "max-w-[92%] whitespace-pre-wrap break-words text-[15px] leading-7 sm:max-w-[75%]",
+                            isUser
+                              ? "rounded-[22px] bg-orbit-gradient px-3.5 py-2.5 text-white shadow-md shadow-primary/20 sm:px-4"
+                              : "rounded-2xl bg-card px-3.5 py-3 text-foreground ring-1 ring-primary/10 sm:px-4"
+                          )}
+                        >
+                          {msg.content}
                         </div>
-                      )}
-                    </div>
-                  );
-                })
+                        {action && (
+                          <div className="mt-2 w-full max-w-sm">
+                            <TransactionActionCard
+                              action={action}
+                              beforeIdle={beforeIdle}
+                              onOutcome={onTxOutcome}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </>
               )}
 
               {sendMutation.isPending && (
@@ -440,7 +464,8 @@ export default function ChatPage() {
 
               {sendMutation.isError && (
                 <div className="rounded-2xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-                  {(sendMutation.error as Error)?.message ?? "Something went wrong. Try again."}
+                  {(sendMutation.error as Error)?.message ??
+                    "Something went wrong. Try again."}
                 </div>
               )}
             </div>
