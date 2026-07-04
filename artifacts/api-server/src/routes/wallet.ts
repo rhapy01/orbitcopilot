@@ -3,9 +3,6 @@ import {
   getDemoKeypair,
   getAccountBalances,
   getAccountOperations,
-  getMainnetAccountBalances,
-  getMainnetAccountOperations,
-  getXlmPriceUsd,
   getAssetPrice,
   buildTransaction,
   submitSignedTransaction,
@@ -27,17 +24,14 @@ router.get("/wallet", async (req, res): Promise<void> => {
 
   try {
     let address: string;
-    let network: string;
     let balances;
 
     if (publicKey) {
       address = publicKey;
-      network = "Stellar Mainnet";
-      balances = await getMainnetAccountBalances(address);
+      balances = await getAccountBalances(address);
     } else {
       const keypair = await getDemoKeypair();
       address = keypair.publicKey();
-      network = "Stellar Testnet";
       balances = await getAccountBalances(address);
     }
 
@@ -53,7 +47,7 @@ router.get("/wallet", async (req, res): Promise<void> => {
       GetWalletResponse.parse({
         id: 1,
         address,
-        network,
+        network: "Stellar Testnet",
         totalValueUsd,
         xlmBalance,
         isActive: true,
@@ -61,8 +55,8 @@ router.get("/wallet", async (req, res): Promise<void> => {
       })
     );
   } catch (err) {
-    req.log.error({ err }, "Failed to fetch wallet from Stellar");
-    res.status(500).json({ error: "Failed to fetch wallet data from Stellar network" });
+    req.log.error({ err }, "Failed to fetch wallet from Stellar testnet");
+    res.status(500).json({ error: "Failed to fetch wallet data from Stellar testnet" });
   }
 });
 
@@ -71,9 +65,8 @@ router.get("/wallet/assets", async (req, res): Promise<void> => {
 
   try {
     let balances;
-
     if (publicKey) {
-      balances = await getMainnetAccountBalances(publicKey);
+      balances = await getAccountBalances(publicKey);
     } else {
       const keypair = await getDemoKeypair();
       balances = await getAccountBalances(keypair.publicKey());
@@ -82,8 +75,6 @@ router.get("/wallet/assets", async (req, res): Promise<void> => {
     const assets = await Promise.all(
       balances.map(async (b, i) => {
         const priceUsd = await getAssetPrice(b.assetCode, b.assetIssuer ?? undefined);
-        const change24h =
-          b.assetCode === "XLM" ? -1.2 : b.assetCode === "USDC" ? 0.0 : (Math.random() - 0.5) * 10;
         return {
           id: i + 1,
           assetCode: b.assetCode,
@@ -91,7 +82,7 @@ router.get("/wallet/assets", async (req, res): Promise<void> => {
           balance: b.balance,
           valueUsd: b.balance * priceUsd,
           priceUsd,
-          change24h,
+          change24h: 0,
           logoUrl: b.logoUrl,
         };
       })
@@ -99,8 +90,8 @@ router.get("/wallet/assets", async (req, res): Promise<void> => {
 
     res.json(GetWalletAssetsResponse.parse(assets));
   } catch (err) {
-    req.log.error({ err }, "Failed to fetch wallet assets from Stellar");
-    res.status(500).json({ error: "Failed to fetch assets from Stellar network" });
+    req.log.error({ err }, "Failed to fetch wallet assets from Stellar testnet");
+    res.status(500).json({ error: "Failed to fetch assets from Stellar testnet" });
   }
 });
 
@@ -113,7 +104,7 @@ router.get("/wallet/transactions", async (req, res): Promise<void> => {
 
     if (publicKey) {
       address = publicKey;
-      operations = await getMainnetAccountOperations(address);
+      operations = await getAccountOperations(address);
     } else {
       const keypair = await getDemoKeypair();
       address = keypair.publicKey();
@@ -145,10 +136,6 @@ router.get("/wallet/transactions", async (req, res): Promise<void> => {
         type = "swap";
         assetCode = op.asset_type === "native" ? "XLM" : op.asset_code ?? "XLM";
         amount = parseFloat(op.amount ?? "0");
-      } else if (op.type === "claim_claimable_balance") {
-        type = "receive";
-        assetCode = op.asset_type === "native" ? "XLM" : op.asset_code ?? "XLM";
-        amount = parseFloat(op.amount ?? "0");
       }
 
       return {
@@ -159,7 +146,7 @@ router.get("/wallet/transactions", async (req, res): Promise<void> => {
         valueUsd: 0,
         status: "completed" as const,
         counterparty: op.from !== address ? op.from : op.to,
-        description: `${op.type.replace(/_/g, " ")} on Stellar`,
+        description: `${op.type.replace(/_/g, " ")} on Stellar testnet`,
         hash: op.transaction_hash ?? null,
         createdAt: op.created_at ?? new Date().toISOString(),
       };
@@ -167,8 +154,8 @@ router.get("/wallet/transactions", async (req, res): Promise<void> => {
 
     res.json(GetTransactionsResponse.parse(txns));
   } catch (err) {
-    req.log.error({ err }, "Failed to fetch transactions from Stellar");
-    res.status(500).json({ error: "Failed to fetch transactions from Stellar network" });
+    req.log.error({ err }, "Failed to fetch transactions from Stellar testnet");
+    res.status(500).json({ error: "Failed to fetch transactions from Stellar testnet" });
   }
 });
 
