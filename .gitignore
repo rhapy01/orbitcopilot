@@ -2,6 +2,8 @@
 
 # compiled output
 dist
+dist-smoke
+dist-smoke-net
 tmp
 out-tsc
 *.tsbuildinfo
@@ -62,3 +64,5 @@ Thumbs.db
 
 .vercel
 
+
+.vercel
