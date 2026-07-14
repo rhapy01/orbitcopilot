@@ -94,6 +94,43 @@ async function buildPortfolioIntelLive(publicKey: string): Promise<PortfolioInte
     });
   }
 
+  // --- StelDex free token balances (Soroban — not visible on Horizon) ---
+  try {
+    const { getSteldexWalletBalances } = await import("./steldex");
+    const steldexBals = await getSteldexWalletBalances(publicKey);
+    for (const b of steldexBals) {
+      const asset = b.asset.toUpperCase() === "CUSDC" ? "USDC" : b.asset;
+      if (
+        positions.some(
+          (p) =>
+            p.id === `wallet-${asset}` ||
+            p.asset === asset ||
+            (asset === "USDC" && (p.asset === "USDC" || p.asset === "cUSDC"))
+        )
+      ) {
+        continue;
+      }
+      const price = await getAssetPrice(asset).catch(() => 0);
+      positions.push({
+        id: `wallet-${asset}`,
+        protocol: "StelDex",
+        kind: "wallet",
+        label: `${asset} balance`,
+        asset,
+        amount: b.balance.toFixed(4),
+        status: "idle",
+        note: "Soroban wallet balance (StelDex)",
+        suggestion:
+          b.balance >= 1
+            ? `add liquidity on StelDex with ${asset === "USDC" ? "cUSDC" : asset}`
+            : undefined,
+        meta: { valueUsd: b.balance * price },
+      });
+    }
+  } catch {
+    // ignore
+  }
+
   // --- Soroswap token balances (idle if not in LP) ---
   if (soroswapConfigured()) {
     try {
@@ -184,6 +221,13 @@ async function buildPortfolioIntelLive(publicKey: string): Promise<PortfolioInte
       }
 
       if (isPositiveLiquidity(p.stakedLiquidity)) {
+        const aprRaw =
+          Number(
+            p.farm?.baseAprPercent ??
+              p.farm?.aprPercent ??
+              p.baseAprPercent ??
+              0
+          ) || 0;
         positions.push({
           id: `steldex-farm-${pair}`,
           protocol: "StelDex",
@@ -194,7 +238,10 @@ async function buildPortfolioIntelLive(publicKey: string): Promise<PortfolioInte
           status: "earning",
           note: "Staked in farm — earning STELLAR rewards",
           suggestion: `claim rewards from ${pair}`,
-          meta: { poolContract },
+          meta: {
+            poolContract,
+            ...(aprRaw > 0 && aprRaw < 100_000 ? { aprPercent: aprRaw } : {}),
+          },
         });
       }
     }
@@ -251,13 +298,46 @@ async function buildPortfolioIntelLive(publicKey: string): Promise<PortfolioInte
     // ignore
   }
 
-  // --- Blend: we don't have live position reads yet; surface opportunity if idle USDC ---
+  // --- Blend live positions (get_positions) + idle opportunity ---
   try {
+    const { listBlendPositions } = await import("./blend");
+    const blendPositions = await listBlendPositions(publicKey);
+    for (const bp of blendPositions) {
+      if (parseFloat(bp.supply) > 0) {
+        positions.push({
+          id: `blend-supply-${bp.symbol}`,
+          protocol: "Blend",
+          kind: "lend",
+          label: `Supply ${bp.symbol}`,
+          asset: bp.symbol,
+          amount: bp.supply,
+          status: "earning",
+          note: "Blend lending position (on-chain)",
+          suggestion: `withdraw ${bp.supply} ${bp.symbol} on Blend`,
+          meta: { pool: bp.poolContract },
+        });
+      }
+      if (parseFloat(bp.liability) > 0) {
+        positions.push({
+          id: `blend-borrow-${bp.symbol}`,
+          protocol: "Blend",
+          kind: "borrow",
+          label: `Borrow ${bp.symbol}`,
+          asset: bp.symbol,
+          amount: bp.liability,
+          status: "borrowing",
+          note: "Blend borrow liability (on-chain)",
+          suggestion: `repay ${bp.liability} ${bp.symbol} on Blend`,
+          meta: { pool: bp.poolContract },
+        });
+      }
+    }
+
     const blend = await getBlendContracts();
     const idleUsdc = positions.find(
       (p) => p.kind === "wallet" && p.asset === "USDC" && p.status === "idle"
     );
-    if (idleUsdc && blend.ids.TestnetV2) {
+    if (idleUsdc && blend.ids.TestnetV2 && blendPositions.every((b) => parseFloat(b.supply) === 0)) {
       positions.push({
         id: "blend-opportunity",
         protocol: "Blend",
@@ -266,10 +346,8 @@ async function buildPortfolioIntelLive(publicKey: string): Promise<PortfolioInte
         asset: "USDC/XLM/BLND",
         amount: "0",
         status: "idle",
-        note: "No live Blend position detected — idle cash can be supplied to earn",
-        suggestion: idleUsdc
-          ? `supply ${idleUsdc.amount} USDC on Blend`
-          : "supply 10 USDC on Blend",
+        note: "Idle cash can be supplied to Blend to earn",
+        suggestion: `supply ${idleUsdc.amount} USDC on Blend`,
         meta: { pool: blend.ids.TestnetV2 },
       });
     }
@@ -308,7 +386,8 @@ async function buildPortfolioIntelLive(publicKey: string): Promise<PortfolioInte
     for (const p of perps) {
       if (p.status !== "open" && p.status !== "pending") continue;
       const sym = p.market?.symbol ?? "?";
-      const mark = p.status === "open" ? await markPrice(sym) : p.entryPrice;
+      const markInfo = p.status === "open" ? await markPrice(sym) : null;
+      const mark = markInfo?.price ?? p.entryPrice;
       const dir = p.side === "long" ? 1 : -1;
       const uPnL =
         p.status === "open"
@@ -325,7 +404,7 @@ async function buildPortfolioIntelLive(publicKey: string): Promise<PortfolioInte
         note:
           p.status === "pending"
             ? "Perp margin pending confirmation"
-            : `uPnL $${uPnL.toFixed(2)} · entry $${p.entryPrice.toFixed(2)} · mark $${mark.toFixed(2)}`,
+            : `uPnL $${uPnL.toFixed(2)} · entry $${p.entryPrice.toFixed(2)} · mark $${mark.toFixed(2)}${markInfo?.stale ? " (oracle fallback)" : ""}`,
         suggestion: `close my ${sym} perp`,
         meta: {
           positionId: p.id,
@@ -547,26 +626,50 @@ export async function formatEarningReport(publicKey: string): Promise<string> {
   const earning = intel.positions.filter((p) => p.status === "earning");
   const idle = intel.positions.filter((p) => p.status === "idle" && p.kind === "wallet");
 
-  const lines = [
-    `Earning vs idle for ${publicKey.slice(0, 4)}…${publicKey.slice(-4)}:`,
-    "",
-    `✓ Earning positions: ${earning.length}`,
-  ];
+  // Compute total wallet USD value
+  const walletPositions = intel.positions.filter((p) => p.kind === "wallet");
+  const totalWalletUsd = walletPositions.reduce((sum, p) => {
+    const v = (p.meta?.valueUsd as number) ?? 0;
+    return sum + v;
+  }, 0);
+
+  const lines: string[] = [];
+
+  if (totalWalletUsd > 0) {
+    lines.push(`Portfolio wallet value: $${totalWalletUsd.toFixed(2)} USD`);
+    lines.push("");
+  }
+
+  lines.push(`Earning positions: ${earning.length}`);
   if (earning.length) {
     for (const p of earning) {
-      lines.push(`  • ${p.protocol} ${p.label} (${p.amount}) — ${p.note}`);
+      const apr = (p.meta?.aprPercent as number | undefined);
+      const aprStr = apr != null && apr > 0 && apr < 100000
+        ? ` — APR ~${apr.toFixed(1)}%`
+        : "";
+      const valueUsd = (p.meta?.valueUsd as number | undefined);
+      const valueStr = valueUsd != null && valueUsd > 0 ? ` ($${valueUsd.toFixed(2)})` : "";
+      lines.push(`  • ${p.protocol} ${p.label}${valueStr}${aprStr} — ${p.note}`);
     }
   } else {
-    lines.push("  (none)");
+    lines.push("  None — your capital is not earning yield right now.");
   }
+
   lines.push("");
-  lines.push(`○ Idle capital: ${idle.length} wallet holdings`);
+  lines.push(`Idle capital: ${idle.length} wallet holding${idle.length !== 1 ? "s" : ""}`);
   for (const p of idle) {
-    lines.push(`  • ${p.amount} ${p.asset}${p.suggestion ? ` — "${p.suggestion}"` : ""}`);
+    const valueUsd = (p.meta?.valueUsd as number | undefined);
+    const valueStr = valueUsd != null && valueUsd > 0 ? ` ($${valueUsd.toFixed(2)})` : "";
+    lines.push(`  • ${p.amount} ${p.asset}${valueStr}${p.suggestion ? ` — try: "${p.suggestion}"` : ""}`);
   }
+
   if (intel.moves[0]) {
     lines.push("");
-    lines.push(`Next best move: "${intel.moves[0].command}"`);
+    lines.push(`Best next move: "${intel.moves[0].command}"`);
+    if (intel.moves[0].reason) {
+      lines.push(`Reason: ${intel.moves[0].reason}`);
+    }
   }
+
   return lines.join("\n");
 }

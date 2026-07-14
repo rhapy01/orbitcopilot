@@ -27,6 +27,16 @@ export function requirePerpsContract(): string {
   return id;
 }
 
+export function requireNftContract(): string {
+  const id = process.env.ORBIT_NFT_CONTRACT_ID?.trim();
+  if (!id || !id.startsWith("C")) {
+    throw new Error(
+      "Orbit NFT is fully on-chain. Deploy contracts/orbit-nft and set ORBIT_NFT_CONTRACT_ID=C…"
+    );
+  }
+  return id;
+}
+
 /** Build an unsigned Soroban contract invocation for Freighter. */
 export async function buildContractInvoke(input: {
   sourcePublicKey: string;
@@ -68,4 +78,50 @@ export async function buildContractInvoke(input: {
 export async function enumUnit(name: string): Promise<xdr.ScVal> {
   const { xdr: x } = await import("@stellar/stellar-sdk");
   return x.ScVal.scvVec([x.ScVal.scvSymbol(name)]);
+}
+
+/**
+ * Read a SEP-41 / SAC token balance via Soroban simulate (not Horizon).
+ * Required for StelDex assets like pUSDC/cUSDC/STELLAR that never appear on classic balances.
+ */
+export async function getSorobanTokenBalance(
+  walletAddress: string,
+  tokenContractId: string
+): Promise<bigint> {
+  const {
+    Address,
+    Contract,
+    TransactionBuilder,
+    Networks,
+    BASE_FEE,
+    scValToNative,
+  } = await import("@stellar/stellar-sdk");
+  const { Server } = await import("@stellar/stellar-sdk/rpc");
+  const { getDemoKeypair } = await import("./stellar");
+
+  const rpc = new Server(SOROBAN_RPC);
+  // Simulation source can be any funded account; balance() reads `walletAddress`.
+  const demo = await getDemoKeypair();
+  const account = await rpc.getAccount(demo.publicKey());
+
+  const contract = new Contract(tokenContractId);
+  const tx = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: Networks.TESTNET,
+  })
+    .addOperation(contract.call("balance", Address.fromString(walletAddress).toScVal()))
+    .setTimeout(30)
+    .build();
+
+  const sim = await rpc.simulateTransaction(tx);
+  if ((sim as any)?.error) {
+    throw new Error(`Token balance simulation failed: ${(sim as any).error}`);
+  }
+  const retval = (sim as any)?.result?.retval;
+  if (retval == null) return 0n;
+  const native = scValToNative(retval);
+  if (typeof native === "bigint") return native;
+  if (typeof native === "number") return BigInt(Math.trunc(native));
+  if (typeof native === "string") return BigInt(native);
+  return 0n;
 }

@@ -6,6 +6,7 @@ import {
 } from "./onchain";
 import { getReflectorPrice } from "./reflector";
 import { SOROBAN_RPC } from "./stellar";
+import { resolveAssetCode } from "./fuzzy-normalize";
 
 /** Markets must match on-chain set_market calls in deploy script. */
 export const PERP_MARKETS = [
@@ -38,15 +39,25 @@ export function findPerpMarket(hint: string) {
     ETHUSD: "ETH",
     STELLAR: "XLM",
   };
-  const sym = aliases[h] ?? h;
+  let sym = aliases[h] ?? h;
+  if (!PERP_MARKETS.some((m) => m.symbol === sym)) {
+    const fuzzy = resolveAssetCode(hint);
+    if (fuzzy === "BTC" || fuzzy === "ETH" || fuzzy === "XLM") sym = fuzzy;
+    else if (fuzzy === "STELLAR") sym = "XLM";
+  }
   return PERP_MARKETS.find((m) => m.symbol === sym) ?? null;
 }
 
-export async function markPrice(symbol: string): Promise<number> {
+export async function markPrice(symbol: string): Promise<{ price: number; stale: boolean }> {
   const p = await getReflectorPrice(symbol);
-  if (p.price != null && p.price > 0) return p.price;
+  if (p.price != null && p.price > 0) return { price: p.price, stale: false };
   const fallbacks: Record<string, number> = { BTC: 95000, ETH: 3500, XLM: 0.12 };
-  return fallbacks[symbol.toUpperCase()] ?? 1;
+  return { price: fallbacks[symbol.toUpperCase()] ?? 1, stale: true };
+}
+
+/** @deprecated use markPrice().price — kept for call sites that only need a number */
+export async function markPriceNumber(symbol: string): Promise<number> {
+  return (await markPrice(symbol)).price;
 }
 
 export async function listPerpMarkets() {
@@ -78,7 +89,8 @@ export async function preparePerpOpen(input: {
     throw new Error(`Leverage must be 1–${market.maxLeverage} for ${market.symbol}`);
   }
 
-  const entry = await markPrice(market.symbol);
+  const mark = await markPrice(market.symbol);
+  const entry = mark.price;
   const margin = parseFloat(input.marginUsdc);
   if (!Number.isFinite(margin) || margin <= 0) {
     throw new Error("Margin must be positive USDC");
@@ -123,6 +135,7 @@ export async function preparePerpOpen(input: {
     marginUsdc: margin,
     notionalUsdc: notional,
     entryPrice: entry,
+    markPriceStale: mark.stale,
     stopLoss: input.stopLoss ?? null,
     takeProfit: input.takeProfit ?? null,
     liquidationPrice: liq,
@@ -182,7 +195,11 @@ export async function preparePerpClose(input: {
     message: `Close on-chain perp #${positionId}. Sign to settle margin+PnL from the contract.`,
     entryPrice: pos ? fromPriceE7(pos.entry_price_e7) : undefined,
     market: pos?.symbol,
-    side: pos?.side,
+    side: pos
+      ? String(pos.side).toLowerCase().includes("short")
+        ? "short"
+        : "long"
+      : undefined,
   };
 }
 
@@ -234,8 +251,9 @@ export async function formatPerpMarkets(): Promise<string> {
   const lines = [];
   for (const m of PERP_MARKETS) {
     const px = await markPrice(m.symbol);
+    const stale = px.stale ? " ⚠ stale oracle fallback" : "";
     lines.push(
-      `• ${m.symbol}-USDC · mark $${px.toFixed(m.symbol === "XLM" ? 4 : 2)} · max ${m.maxLeverage}x · on-chain margin`
+      `• ${m.symbol}-USDC · mark $${px.price.toFixed(m.symbol === "XLM" ? 4 : 2)}${stale} · max ${m.maxLeverage}x · on-chain margin`
     );
   }
   return [
@@ -261,13 +279,14 @@ export async function formatPerpPositions(wallet: string): Promise<string> {
       const pos = await readPosition(contractId, id);
       if (!pos || pos.status === "Closed" || pos.status === "Liquidated") continue;
       const entry = fromPriceE7(pos.entry_price_e7);
-      const mark = await markPrice(String(pos.symbol));
+      const markInfo = await markPrice(String(pos.symbol));
+      const mark = markInfo.price;
       const dir = pos.side === "Short" || pos.side === 1 ? -1 : 1;
       const notional = Number(pos.notional) / 1e7;
       const margin = Number(pos.margin) / 1e7;
       const uPnL = ((mark - entry) / entry) * dir * notional;
       lines.push(
-        `• #${id} ${pos.side} ${pos.symbol} ${pos.leverage}x · margin $${margin.toFixed(2)} · entry $${entry.toFixed(2)} · mark $${mark.toFixed(2)} · uPnL $${uPnL.toFixed(2)}`
+        `• #${id} ${pos.side} ${pos.symbol} ${pos.leverage}x · margin $${margin.toFixed(2)} · entry $${entry.toFixed(2)} · mark $${mark.toFixed(2)}${markInfo.stale ? " (stale)" : ""} · uPnL $${uPnL.toFixed(2)}`
       );
     }
     return lines.length > 2 ? lines.join("\n") : "No open on-chain perpetual positions.";
