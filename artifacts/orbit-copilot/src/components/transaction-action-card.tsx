@@ -10,11 +10,14 @@ import {
 } from "lucide-react";
 import { useBuildTransaction, useSubmitTransaction } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
-import { useFreighter } from "@/hooks/use-freighter";
+import { cn } from "@/lib/utils";
+import { useWallet } from "@/hooks/use-wallet";
 import {
   STELDEX_FULL_RANGE,
   STELDEX_NETWORK_PASSPHRASE,
   buildAndSubmitSteldex,
+  formatReceiveEstimate,
+  fromSteldexUnits,
   steldexDecimals,
   steldexExplorerTxUrl,
   toSteldexUnits,
@@ -22,6 +25,36 @@ import {
 } from "@/lib/steldex-submit";
 import { track } from "@/lib/analytics";
 import { actionConfidence, outcomeSummary } from "@/lib/action-confidence";
+
+function isBetaNftMintAction(action: ChatAction): boolean {
+  if (action.type !== "nft_mint") return false;
+  const name = (action.sendAsset ?? "").toLowerCase();
+  const uri = (action.marketHint ?? "").toLowerCase();
+  return (
+    name.includes("beta tester") ||
+    name.includes("orbit beta") ||
+    name.includes("orbit co-pilot beta") ||
+    uri.includes("orbit-beta-tester")
+  );
+}
+
+/** Persist one-per-wallet claim so UI/AI stop offering mint again. */
+async function confirmBetaNftClaim(
+  walletAddress: string,
+  txHash: string
+): Promise<void> {
+  const res = await fetch("/api/nft/claim-beta/confirm", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ walletAddress, txHash }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(
+      typeof data?.error === "string" ? data.error : "Failed to record beta NFT claim"
+    );
+  }
+}
 
 export interface ChatAction {
   type:
@@ -43,7 +76,16 @@ export interface ChatAction {
     | "blend_borrow"
     | "blend_repay"
     | "predict_bet"
-    | "perp_open";
+    | "predict_claim"
+    | "perp_open"
+    | "perp_close"
+    | "nft_mint"
+    | "nft_list"
+    | "nft_buy"
+    | "nft_transfer"
+    | "aquarius_swap"
+    | "connect_wallet"
+    | "add_trustline";
   requestType?: number;
   sendAmount?: string;
   sendAsset?: string;
@@ -65,6 +107,8 @@ export interface ChatAction {
   orderId?: string;
   amount0Min?: string;
   amount1Min?: string;
+  /** Human-readable estimated receive (from quote). */
+  estimatedDestAmount?: string;
   positionId?: number;
   marketHint?: string;
   outcome?: string;
@@ -76,11 +120,79 @@ export interface ChatAction {
   entryPrice?: number;
   liquidationPrice?: number;
   notionalUsdc?: number;
+  tokenId?: number;
+  metadataUri?: string;
+  priceXlm?: string;
+  markPriceStale?: boolean;
   xdr?: string;
   networkPassphrase?: string;
+  /** For add_trustline: the swap action to auto-execute after trustline is added */
+  pendingAction?: ChatAction;
 }
 
 type Status = "idle" | "building" | "signing" | "submitting" | "success" | "error";
+
+/** Translate raw Soroban/wallet/network error messages into plain English. */
+function sanitizeError(raw: string): string {
+  if (!raw) return "Something went wrong. Try again.";
+  const r = raw.toLowerCase();
+  if (r.includes("user declined") || r.includes("user rejected") || r.includes("cancelled"))
+    return "You declined the transaction.";
+  if (r.includes("device share"))
+    return "This device isn't unlocked for signing. Restore your Orbit wallet first.";
+  if (r.includes("insufficient balance") || r.includes("underfunded"))
+    return "Insufficient balance on this connected wallet — check the header address, keep ~2.5 XLM for fees, and note StelDex uses pUSDC (not classic USDC).";
+  if (r.includes("sequence") || r.includes("out of date") || r.includes("stale sequence"))
+    return "Network wasn’t ready yet after enabling the asset. Tap the button again — it usually works on retry.";
+  if (r.includes("fee") && r.includes("low"))
+    return "Transaction fee too low. Try again — the network may be busy.";
+  if (r.includes("timeout") || r.includes("confirmation timeout"))
+    return "Transaction timed out waiting for confirmation. It may still go through — check the explorer.";
+  if (r.includes("feebumpinnerfailed") || r.includes("inner failed"))
+    return "The transaction was rejected on-chain. Check your balances and try again.";
+  if (r.includes("no xdr") || r.includes("missing") || r.includes("no transaction"))
+    return "Could not build the transaction. The protocol may be temporarily unavailable.";
+  if (r.includes("network") || r.includes("reach") || r.includes("fetch"))
+    return "Network error — couldn't reach the blockchain. Check your connection and try again.";
+  if (r.includes("slippage") || r.includes("price impact"))
+    return "Price moved too much during the transaction. Try again or increase slippage tolerance.";
+  if (r.includes("trustline") || r.includes("op_no_trust") || r.includes("no trust") || r.includes("not authorized"))
+    return "Your wallet needs this asset enabled first. Orbit can set that up in one sign.";
+  if (r.includes("submit failed") && r.includes("aaa"))
+    return "Network wasn’t ready yet after a prior step. Tap again to retry the swap.";
+  // If none matched, return the raw message but cap its length
+  return raw.length > 120 ? raw.slice(0, 120) + "…" : raw;
+}
+
+/** Poll Horizon until the classic trustline exists (post changeTrust). */
+async function waitForTrustlineReady(
+  publicKey: string,
+  assetCode: string,
+  maxAttempts = 12
+): Promise<boolean> {
+  const code = assetCode.toUpperCase() === "CUSDC" ? "USDC" : assetCode.toUpperCase();
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      const res = await fetch(
+        `https://horizon-testnet.stellar.org/accounts/${encodeURIComponent(publicKey)}`
+      );
+      if (res.ok) {
+        const acct = await res.json();
+        const balances = Array.isArray(acct?.balances) ? acct.balances : [];
+        const found = balances.some(
+          (b: any) =>
+            (b.asset_type === "native" && code === "XLM") ||
+            (typeof b.asset_code === "string" && b.asset_code.toUpperCase() === code)
+        );
+        if (found) return true;
+      }
+    } catch {
+      // keep polling
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  return false;
+}
 
 function isSteldexAction(type: ChatAction["type"]) {
   return type.startsWith("steldex_");
@@ -95,7 +207,17 @@ function isSorobanAction(type: ChatAction["type"]) {
 }
 
 function isOrbitNativeAction(type: ChatAction["type"]) {
-  return type === "predict_bet" || type === "perp_open";
+  return (
+    type === "predict_bet" ||
+    type === "predict_claim" ||
+    type === "perp_open" ||
+    type === "perp_close" ||
+    type === "nft_mint" ||
+    type === "nft_list" ||
+    type === "nft_buy" ||
+    type === "nft_transfer" ||
+    type === "aquarius_swap"
+  );
 }
 
 function actionTitle(action: ChatAction): string {
@@ -106,6 +228,8 @@ function actionTitle(action: ChatAction): string {
       return "Swap (Classic DEX)";
     case "soroswap_swap":
       return "Soroswap Swap";
+    case "aquarius_swap":
+      return "Aquarius Swap";
     case "soroswap_add_liquidity":
       return "Soroswap Add LP";
     case "soroswap_remove_liquidity":
@@ -120,8 +244,20 @@ function actionTitle(action: ChatAction): string {
       return "Blend Repay";
     case "predict_bet":
       return "Prediction Bet";
+    case "predict_claim":
+      return "Claim Prediction";
     case "perp_open":
       return "Open Perpetual";
+    case "perp_close":
+      return "Close Perpetual";
+    case "nft_mint":
+      return "Mint NFT";
+    case "nft_list":
+      return "List NFT";
+    case "nft_buy":
+      return "Buy NFT";
+    case "nft_transfer":
+      return "Transfer NFT";
     case "steldex_swap":
       return "StelDex Swap";
     case "steldex_add_liquidity":
@@ -138,6 +274,12 @@ function actionTitle(action: ChatAction): string {
       return "Limit Order";
     case "steldex_cancel_order":
       return "Cancel Order";
+    case "connect_wallet":
+      return "Connect Wallet";
+    case "add_trustline":
+      return `Add ${action.sendAsset ?? "Asset"} Trustline`;
+    default:
+      return "On-chain Action";
   }
 }
 
@@ -164,7 +306,7 @@ function steldexEndpoint(type: ChatAction["type"]): SteldexWriteEndpoint {
   }
 }
 
-function buildSteldexBody(action: ChatAction): Record<string, unknown> {
+function buildSteldexBody(action: ChatAction, slippageBps = 50): Record<string, unknown> {
   const tickLower = action.tickLower ?? STELDEX_FULL_RANGE.tickLower;
   const tickUpper = action.tickUpper ?? STELDEX_FULL_RANGE.tickUpper;
 
@@ -179,7 +321,7 @@ function buildSteldexBody(action: ChatAction): Record<string, unknown> {
         fromTokenContract: from,
         toTokenContract: to,
         amountIn: toSteldexUnits(action.sendAmount, steldexDecimals(action.sendAsset)),
-        slippageBps: 50,
+        slippageBps,
       };
     }
     case "steldex_add_liquidity": {
@@ -266,78 +408,266 @@ function buildSteldexBody(action: ChatAction): Record<string, unknown> {
 }
 
 export function TransactionActionCard({
-  action,
+  action: initialAction,
   beforeIdle,
   onOutcome,
+  onContinue,
 }: {
   action: ChatAction;
-  /** Snapshot of idle capital before this action (for outcome copy). */
   beforeIdle?: string | null;
   onOutcome?: (info: { hash: string | null; summary: string }) => void;
+  /** Called with a follow-up prompt when a chained action should continue */
+  onContinue?: (prompt: string) => void;
 }) {
-  const { isConnected, publicKey, connect, connecting, signTransaction } = useFreighter();
+  const { isConnected, publicKey, openConnectModal, connecting, signTransaction, type: walletType } = useWallet();
   const buildMutation = useBuildTransaction();
   const submitMutation = useSubmitTransaction();
 
+  // After enabling an asset, morph into the pending swap/send without a new chat turn
+  const [action, setAction] = useState(initialAction);
+  useEffect(() => {
+    setAction(initialAction);
+  }, [initialAction]);
+
+  const isSwap =
+    action.type === "steldex_swap" ||
+    action.type === "soroswap_swap" ||
+    action.type === "soroswap_add_liquidity" ||
+    action.type === "soroswap_remove_liquidity";
+  const [slippageBps, setSlippageBps] = useState(50); // default 0.5%
+  const SLIPPAGE_OPTIONS = [{ label: "0.5%", bps: 50 }, { label: "1%", bps: 100 }, { label: "2%", bps: 200 }];
+
   const [status, setStatus] = useState<Status>("idle");
   const [progress, setProgress] = useState<string | null>(null);
+  const [stepInfo, setStepInfo] = useState<{ current: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [hash, setHash] = useState<string | null>(null);
-  const [estimatedDest, setEstimatedDest] = useState<string | null>(null);
+  const [estimatedDest, setEstimatedDest] = useState<string | null>(
+    action.estimatedDestAmount ?? null
+  );
+  const [quoteLoading, setQuoteLoading] = useState(false);
   const [outcomeLine, setOutcomeLine] = useState<string | null>(null);
   const trackedStatus = useRef<Status>("idle");
+  const betaClaimRecorded = useRef(false);
   const confidence = actionConfidence(action);
 
   useEffect(() => {
-    if (trackedStatus.current === status) return;
-    trackedStatus.current = status;
-    if (status === "signing") {
-      track("tx_sign", {
-        walletPublicKey: publicKey,
-        metadata: { actionType: action.type },
-      });
-    } else if (status === "success") {
-      track("tx_submit", {
-        walletPublicKey: publicKey,
-        metadata: { actionType: action.type, txHash: hash },
-      });
-      const summary = outcomeSummary(action);
-      setOutcomeLine(summary);
-      if (publicKey) {
-        void fetch("/api/portfolio/outcome", {
+    setEstimatedDest(action.estimatedDestAmount ?? null);
+  }, [action.estimatedDestAmount]);
+
+  useEffect(() => {
+    // Reset claim recorder when a new beta mint card is shown
+    betaClaimRecorded.current = false;
+  }, [action.type, action.sendAsset, action.marketHint, action.xdr]);
+
+  const recordBetaClaimIfNeeded = async (
+    txHash: string | null | undefined
+  ): Promise<boolean> => {
+    if (!publicKey || !txHash || !isBetaNftMintAction(action) || betaClaimRecorded.current) {
+      return false;
+    }
+    betaClaimRecorded.current = true;
+    try {
+      await confirmBetaNftClaim(publicKey, txHash);
+      return true;
+    } catch {
+      // Allow a retry on next success effect if first attempt failed
+      betaClaimRecorded.current = false;
+      return false;
+    }
+  };
+
+  useEffect(() => {
+    if (estimatedDest || quoteLoading) return;
+
+    const fetchSteldexQuote = async () => {
+      if (action.type !== "steldex_swap") return;
+      if (!action.sendAmount || !action.sendAsset || !action.destAsset) return;
+      if (!action.fromTokenContract || !action.toTokenContract) return;
+
+      setQuoteLoading(true);
+      try {
+        const res = await fetch("/api/steldex/swap-quote", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            publicKey,
-            summary,
-            txHash: hash,
-            beforeIdle: beforeIdle ?? null,
-            afterNote: "Portfolio cache refreshed — ask what's earning to verify on-chain.",
+            walletAddress: publicKey ?? "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN",
+            fromTokenContract: action.fromTokenContract,
+            toTokenContract: action.toTokenContract,
+            amountIn: toSteldexUnits(
+              action.sendAmount,
+              steldexDecimals(action.sendAsset)
+            ),
+            slippageBps,
           }),
-        }).catch(() => {});
+        });
+        const data = await res.json();
+        if (!res.ok) return;
+        // API returns outputAmount (human-readable) or amountOutRaw (raw integer)
+        const human = data.outputAmount;
+        const raw = data.amountOutRaw ?? data.amountOut ?? data.minAmountOut ?? data.minAmountOutRaw;
+        if (human != null && human !== "") {
+          setEstimatedDest(String(human));
+        } else if (raw != null && raw !== "") {
+          setEstimatedDest(fromSteldexUnits(String(raw), steldexDecimals(action.destAsset)));
+        }
+      } catch {
+        /* quote optional */
+      } finally {
+        setQuoteLoading(false);
       }
-      onOutcome?.({ hash, summary });
-    } else if (status === "error") {
-      track("error", {
-        walletPublicKey: publicKey,
-        metadata: { source: "tx", actionType: action.type, message: error },
-      });
-    }
+    };
+
+    const fetchClassicQuote = async () => {
+      if (action.type !== "swap" || !publicKey) return;
+      if (!action.sendAmount || !action.sendAsset || !action.destAsset) return;
+
+      setQuoteLoading(true);
+      try {
+        const res = await fetch("/api/wallet/build-transaction", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "swap",
+            sourcePublicKey: publicKey,
+            sendAsset: action.sendAsset,
+            sendAmount: action.sendAmount,
+            destAsset: action.destAsset,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) return;
+        if (data.estimatedDestAmount) {
+          setEstimatedDest(String(data.estimatedDestAmount));
+        }
+      } catch {
+        /* quote optional */
+      } finally {
+        setQuoteLoading(false);
+      }
+    };
+
+    if (action.type === "steldex_swap") void fetchSteldexQuote();
+    else if (action.type === "swap") void fetchClassicQuote();
+  }, [
+    action,
+    estimatedDest,
+    quoteLoading,
+    publicKey,
+  ]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const run = async () => {
+      let justRecordedBeta = false;
+      if (status === "success" && hash && isBetaNftMintAction(action)) {
+        justRecordedBeta = await recordBetaClaimIfNeeded(hash);
+        if (cancelled) return;
+      }
+
+      if (trackedStatus.current === status) {
+        // Hash often lands after status=success; refresh caches once claim is recorded.
+        if (justRecordedBeta) {
+          onOutcome?.({ hash, summary: outcomeSummary(action) });
+        }
+        return;
+      }
+      trackedStatus.current = status;
+      if (status === "signing") {
+        track("tx_sign", {
+          walletPublicKey: publicKey,
+          metadata: { actionType: action.type },
+        });
+      } else if (status === "success") {
+        track("tx_submit", {
+          walletPublicKey: publicKey,
+          metadata: { actionType: action.type, txHash: hash },
+        });
+        const summary = outcomeSummary(action);
+        setOutcomeLine(summary);
+        if (publicKey) {
+          void fetch("/api/portfolio/outcome", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              publicKey,
+              summary,
+              txHash: hash,
+              beforeIdle: beforeIdle ?? null,
+              afterNote: "Portfolio cache refreshed — ask what's earning to verify on-chain.",
+            }),
+          }).catch(() => {});
+        }
+        onOutcome?.({ hash, summary });
+      } else if (status === "error") {
+        track("error", {
+          walletPublicKey: publicKey,
+          metadata: { source: "tx", actionType: action.type, message: error },
+        });
+      }
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
   }, [status, publicKey, action.type, hash, error, action, beforeIdle, onOutcome]);
 
   const handleExecute = async () => {
     if (!publicKey) return;
     setError(null);
     setProgress(null);
+    setStepInfo(null);
     setStatus("building");
     try {
+      // Add trustline — sign changeTrust XDR and submit via Horizon
+      if (action.type === "add_trustline") {
+        if (!action.xdr || !action.networkPassphrase) {
+          throw new Error("Missing trustline transaction data");
+        }
+        setStatus("signing");
+        setProgress("Sign once to enable this asset…");
+        const signedXdr = await signTransaction(action.xdr, action.networkPassphrase);
+        setStatus("submitting");
+        setProgress("Enabling asset…");
+        const res = await fetch("/api/wallet/submit-transaction", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ signedXdr, networkPassphrase: action.networkPassphrase }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error ?? "Could not enable asset");
+        setHash(data.hash ?? null);
+        // Stay in "submitting" while we confirm Horizon sees the trustline
+        setStatus("submitting");
+        if (action.pendingAction) {
+          const next = action.pendingAction;
+          const assetCode = action.sendAsset ?? "USDC";
+          setProgress("Confirming asset is enabled…");
+          await waitForTrustlineReady(publicKey, assetCode);
+          // Extra beat so Soroban RPC catches Horizon sequence
+          await new Promise((r) => setTimeout(r, 2000));
+          setAction(next);
+          setStatus("idle");
+          setHash(null);
+          setError(null);
+          setProgress(null);
+          setStepInfo(null);
+          setEstimatedDest(next.estimatedDestAmount ?? null);
+          setOutcomeLine(null);
+        } else {
+          setStatus("success");
+        }
+        return;
+      }
       // Orbit-native prediction / perps — Soroban contract invoke (RPC submit)
       if (isOrbitNativeAction(action.type)) {
         if (!action.xdr) {
           throw new Error("Missing prepared contract transaction");
         }
         setStatus("signing");
-        setProgress("Sign in Freighter…");
+        setProgress("Sign with your wallet…");
         const signedXdr = await signTransaction(
           action.xdr,
           action.networkPassphrase || STELDEX_NETWORK_PASSPHRASE
@@ -346,6 +676,7 @@ export function TransactionActionCard({
         setProgress("Submitting to Soroban…");
         const { submitSignedToSoroban } = await import("@/lib/steldex-submit");
         const txHash = await submitSignedToSoroban(signedXdr);
+        await recordBetaClaimIfNeeded(txHash);
         setHash(txHash);
         setStatus("success");
         return;
@@ -365,6 +696,7 @@ export function TransactionActionCard({
             fromSymbol: action.sendAsset,
             toSymbol: action.destAsset,
             amount: action.sendAmount,
+            slippageBps,
           };
         } else if (action.type === "soroswap_add_liquidity") {
           endpoint = "/api/soroswap/add-liquidity";
@@ -374,6 +706,7 @@ export function TransactionActionCard({
             symbolB: action.destAsset,
             amountA: action.sendAmount,
             amountB: action.amountB,
+            slippageBps,
           };
         } else if (action.type === "soroswap_remove_liquidity") {
           endpoint = "/api/soroswap/remove-liquidity";
@@ -382,6 +715,7 @@ export function TransactionActionCard({
             symbolA: action.sendAsset,
             symbolB: action.destAsset,
             liquidity: action.liquidity,
+            slippageBps,
           };
         } else {
           // blend_*
@@ -407,7 +741,7 @@ export function TransactionActionCard({
         if (data.amountOutHuman) setEstimatedDest(data.amountOutHuman);
 
         setStatus("signing");
-        setProgress("Sign in Freighter…");
+        setProgress("Sign with your wallet…");
         const signedXdr = await signTransaction(
           data.xdr,
           data.networkPassphrase || STELDEX_NETWORK_PASSPHRASE
@@ -423,7 +757,7 @@ export function TransactionActionCard({
       }
 
       if (isSteldexAction(action.type)) {
-        const body = buildSteldexBody(action);
+        const body = buildSteldexBody(action, slippageBps);
         const endpoint = steldexEndpoint(action.type);
 
         const txHash = await buildAndSubmitSteldex(
@@ -434,8 +768,9 @@ export function TransactionActionCard({
             setStatus("signing");
             return signTransaction(xdr, STELDEX_NETWORK_PASSPHRASE);
           },
-          (msg) => {
+          (msg, step) => {
             setProgress(msg);
+            if (step) setStepInfo(step);
             if (msg.startsWith("Sign")) setStatus("signing");
             else if (msg.startsWith("Submitting")) setStatus("submitting");
             else setStatus("building");
@@ -479,12 +814,142 @@ export function TransactionActionCard({
       setHash(result.hash ?? null);
       setStatus("success");
     } catch (err: any) {
-      setError(err?.message ?? "Something went wrong");
+      const rawMsg = err?.message ?? "Something went wrong";
+      const lower = String(rawMsg).toLowerCase();
+      const looksLikeTrustline =
+        lower.includes("trustline") ||
+        lower.includes("op_no_trust") ||
+        lower.includes("no_trust") ||
+        lower.includes("not authorized") ||
+        lower.includes("trust ");
+
+      // Mid-tx recovery: build enable-asset step and swap the card over
+      if (
+        looksLikeTrustline &&
+        publicKey &&
+        action.type !== "add_trustline" &&
+        (action.destAsset || action.sendAsset)
+      ) {
+        try {
+          const assetCode = action.destAsset || action.sendAsset!;
+          const res = await fetch("/api/wallet/add-trustline", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ walletAddress: publicKey, assetCode }),
+          });
+          const data = await res.json();
+          if (res.ok && data.xdr) {
+            setAction({
+              type: "add_trustline",
+              sendAsset: data.assetCode ?? assetCode,
+              xdr: data.xdr,
+              networkPassphrase: data.networkPassphrase,
+              pendingAction: action,
+            });
+            setStatus("idle");
+            setError(null);
+            setProgress(null);
+            return;
+          }
+        } catch {
+          // fall through to normal error
+        }
+      }
+
+      setError(sanitizeError(rawMsg));
       setStatus("error");
     }
   };
 
   const isBusy = status === "building" || status === "signing" || status === "submitting";
+
+  if (action.type === "add_trustline") {
+    const asset = action.sendAsset ?? "token";
+    return (
+      <div className="mt-2 max-w-sm rounded-2xl border bg-card p-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded-full bg-orbit-gradient flex items-center justify-center shrink-0">
+            <Wallet className="w-4 h-4 text-white" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold">Enable {asset} on your wallet</p>
+            <p className="text-xs text-muted-foreground">One-time setup before your action</p>
+          </div>
+        </div>
+        <div className="text-[11px] text-muted-foreground bg-orbit-gradient-subtle rounded-xl px-3 py-2 ring-1 ring-primary/10">
+          Your wallet can’t hold {asset} yet. Sign once to enable it (~0.5 XLM locked as a reserve — nothing is sent). Then your swap continues automatically.
+        </div>
+        {status === "success" ? (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-sm font-medium text-green-600">
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
+              {asset} enabled
+            </div>
+            {action.pendingAction && (
+              <p className="text-xs text-muted-foreground">
+                Continuing your action…
+              </p>
+            )}
+          </div>
+        ) : status === "error" ? (
+          <div className="space-y-2">
+            <div className="flex items-start gap-2 text-sm text-destructive">
+              <XCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>{error}</span>
+            </div>
+            <Button size="sm" variant="outline" className="w-full rounded-xl" onClick={handleExecute}>
+              Try again
+            </Button>
+          </div>
+        ) : (
+          <Button
+            size="sm"
+            className="w-full rounded-xl bg-orbit-gradient text-white border-0 hover:opacity-90"
+            onClick={handleExecute}
+            disabled={isBusy || !isConnected}
+          >
+            {isBusy ? (
+              <><Loader2 className="w-4 h-4 mr-1 animate-spin" />{progress ?? "Enabling…"}</>
+            ) : !isConnected ? (
+              <><Wallet className="w-4 h-4 mr-1" />Connect wallet first</>
+            ) : (
+              <>Enable {asset}</>
+            )}
+          </Button>
+        )}
+      </div>
+    );
+  }
+
+  if (action.type === "connect_wallet") {
+    return (
+      <div className="mt-2 max-w-sm rounded-2xl border bg-card p-4">
+        {isConnected && publicKey ? (
+          <p className="text-sm text-foreground">
+            Connected as{" "}
+            <span className="font-medium">
+              {publicKey.slice(0, 4)}…{publicKey.slice(-4)}
+            </span>{" "}
+            on Testnet.
+          </p>
+        ) : (
+          <Button
+            size="sm"
+            className="w-full rounded-xl bg-orbit-gradient text-white border-0 hover:opacity-90"
+            onClick={openConnectModal}
+            disabled={connecting}
+          >
+            {connecting ? (
+              <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+            ) : (
+              <Wallet className="w-4 h-4 mr-1" />
+            )}
+            Connect wallet
+          </Button>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="mt-2 rounded-2xl border bg-card p-4 space-y-3 max-w-sm">
@@ -502,7 +967,7 @@ export function TransactionActionCard({
       </div>
 
       <div className="text-sm space-y-1.5 text-muted-foreground">
-        {action.sendAmount && action.sendAsset && action.type !== "steldex_remove_liquidity" && (
+        {action.sendAmount && action.sendAsset && action.type !== "steldex_remove_liquidity" && action.type !== "steldex_stake" && action.type !== "steldex_unstake" && action.type !== "steldex_claim" && (
           <div className="flex justify-between">
             <span>{action.type === "steldex_add_liquidity" ? "Token A" : "Amount"}</span>
             <span className="font-medium text-foreground">
@@ -545,12 +1010,18 @@ export function TransactionActionCard({
         )}
         {(action.type === "swap" ||
           action.type === "steldex_swap" ||
-          action.type === "soroswap_swap") &&
+          action.type === "soroswap_swap" ||
+          action.type === "aquarius_swap") &&
           action.destAsset && (
           <div className="flex justify-between">
             <span>Receive (est.)</span>
             <span className="font-medium text-foreground">
-              {estimatedDest ? `~${parseFloat(estimatedDest).toFixed(4)}` : "~"} {action.destAsset}
+              {quoteLoading
+                ? "…"
+                : estimatedDest
+                  ? `~${formatReceiveEstimate(estimatedDest, action.destAsset)}`
+                  : "—"}{" "}
+              {action.destAsset}
             </span>
           </div>
         )}
@@ -572,11 +1043,63 @@ export function TransactionActionCard({
             <span className="font-medium text-foreground">{action.outcome.toUpperCase()}</span>
           </div>
         )}
-        {action.type === "predict_bet" && action.marketHint && (
+        {(action.type === "predict_bet" || action.type === "predict_claim") && action.marketHint && (
           <div className="flex justify-between">
             <span>Market</span>
             <span className="font-medium text-foreground">{action.marketHint}</span>
           </div>
+        )}
+        {action.type === "predict_claim" && action.outcome && (
+          <div className="flex justify-between">
+            <span>Claim</span>
+            <span className="font-medium text-foreground">{action.outcome.toUpperCase()} winnings</span>
+          </div>
+        )}
+        {action.type === "perp_close" && (
+          <>
+            <div className="flex justify-between">
+              <span>Close</span>
+              <span className="font-medium text-foreground">
+                #{action.positionId} {action.side?.toUpperCase()} {action.marketHint}
+              </span>
+            </div>
+            {action.entryPrice != null && (
+              <div className="flex justify-between">
+                <span>Entry</span>
+                <span className="font-medium text-foreground">${action.entryPrice.toFixed(2)}</span>
+              </div>
+            )}
+          </>
+        )}
+        {(action.type === "nft_mint" || action.type === "nft_list" || action.type === "nft_buy" || action.type === "nft_transfer") && (
+          <>
+            {action.tokenId != null && (
+              <div className="flex justify-between">
+                <span>Token</span>
+                <span className="font-medium text-foreground">#{action.tokenId}</span>
+              </div>
+            )}
+            {action.marketHint && action.type === "nft_mint" && (
+              <div className="flex justify-between">
+                <span>Name</span>
+                <span className="font-medium text-foreground">{action.marketHint}</span>
+              </div>
+            )}
+            {action.priceXlm && (
+              <div className="flex justify-between">
+                <span>Price</span>
+                <span className="font-medium text-foreground">{action.priceXlm} XLM</span>
+              </div>
+            )}
+            {action.destination && (
+              <div className="flex justify-between">
+                <span>To</span>
+                <span className="font-medium text-foreground font-mono text-xs">
+                  {action.destination.slice(0, 4)}…{action.destination.slice(-4)}
+                </span>
+              </div>
+            )}
+          </>
         )}
         {action.type === "perp_open" && (
           <>
@@ -624,6 +1147,29 @@ export function TransactionActionCard({
         </div>
       </div>
 
+      {isSwap && status === "idle" && (
+        <div className="flex items-center justify-between text-[11px]">
+          <span className="text-muted-foreground">Slippage tolerance</span>
+          <div className="flex gap-1">
+            {SLIPPAGE_OPTIONS.map((opt) => (
+              <button
+                key={opt.bps}
+                type="button"
+                onClick={() => setSlippageBps(opt.bps)}
+                className={cn(
+                  "rounded-full px-2 py-0.5 font-medium transition-colors",
+                  slippageBps === opt.bps
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-muted text-muted-foreground hover:bg-primary/10"
+                )}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {status !== "success" && status !== "error" && (
         <div className="rounded-xl bg-orbit-gradient-subtle px-3 py-2.5 text-[11px] leading-relaxed text-muted-foreground ring-1 ring-primary/10">
           <p className="mb-1.5 font-medium text-foreground">Before you sign</p>
@@ -652,7 +1198,7 @@ export function TransactionActionCard({
           )}
           {hash && (
             <a
-              href={steldexExplorerTxUrl(hash)}
+              href={`https://stellar.expert/explorer/testnet/tx/${hash}`}
               target="_blank"
               rel="noreferrer"
               className="text-xs text-primary flex items-center gap-1 hover:underline"
@@ -675,7 +1221,7 @@ export function TransactionActionCard({
         <Button
           size="sm"
           className="w-full rounded-xl bg-orbit-gradient text-white border-0 hover:opacity-90"
-          onClick={connect}
+          onClick={openConnectModal}
           disabled={connecting}
         >
           {connecting ? (
@@ -683,7 +1229,7 @@ export function TransactionActionCard({
           ) : (
             <Wallet className="w-4 h-4 mr-1" />
           )}
-          Connect Freighter (Testnet)
+          Connect wallet
         </Button>
       ) : (
         <div className="space-y-2">
@@ -697,13 +1243,19 @@ export function TransactionActionCard({
             {status === "building"
               ? progress ?? "Preparing…"
               : status === "signing"
-                ? progress ?? "Confirm in Freighter…"
+                ? `${stepInfo ? `Step ${stepInfo.current}/${stepInfo.total}: ` : ""}${progress ?? (walletType === "internal" ? "Signing…" : "Confirm in Freighter…")}`
                 : status === "submitting"
-                  ? progress ?? "Submitting to Soroban…"
-                  : "Sign with Freighter"}
+                  ? progress ?? "Submitting…"
+                  : walletType === "internal"
+                    ? "Sign with Orbit wallet"
+                    : "Sign with Freighter"}
           </Button>
-          {isBusy && progress && (
-            <p className="text-[11px] text-muted-foreground text-center">{progress}</p>
+          {isBusy && (
+            <p className="text-[11px] text-muted-foreground text-center">
+              {stepInfo && stepInfo.total > 1
+                ? `Step ${stepInfo.current} of ${stepInfo.total}`
+                : progress ?? ""}
+            </p>
           )}
         </div>
       )}

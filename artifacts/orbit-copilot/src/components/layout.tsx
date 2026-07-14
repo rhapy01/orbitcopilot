@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Orbit,
   PanelLeft,
@@ -15,12 +15,27 @@ import {
   ChevronDown,
   X,
   BarChart3,
+  Shield,
+  Mail,
+  BookOpen,
+  Sparkles,
+  Settings,
 } from "lucide-react";
 import { useTheme } from "@/components/theme-provider";
-import { useFreighter } from "@/hooks/use-freighter";
+import { useWallet } from "@/hooks/use-wallet";
+import { WalletConnectModal } from "@/components/auth/wallet-connect-modal";
+import { SecuritySettings } from "@/components/auth/security-settings";
 import { FeedbackDialog } from "@/components/feedback-dialog";
+import { PortfolioDrawer } from "@/components/portfolio-drawer";
 import { cn } from "@/lib/utils";
 import { Link } from "wouter";
+import { useQuery } from "@tanstack/react-query";
+
+type BetaNftStatus = {
+  eligible: boolean;
+  claimed: boolean;
+  canClaim: boolean;
+};
 
 function shorten(key: string) {
   return `${key.slice(0, 4)}…${key.slice(-4)}`;
@@ -44,23 +59,74 @@ function useIsMobile(breakpoint = 768) {
 
 export type SidebarAction =
   | { type: "new-chat" }
+  | { type: "select-session"; sessionId: number }
   | { type: "prompt"; prompt: string }
-  | { type: "focus-input" };
+  | { type: "prefill"; prompt: string }
+  | { type: "focus-input" }
+  | { type: "open-portfolio" };
 
 export function Layout({
   children,
   onSidebarAction,
-  recentTitle,
+  recentSessions,
+  activeSessionId,
 }: {
   children: React.ReactNode;
   onSidebarAction?: (action: SidebarAction) => void;
-  recentTitle?: string | null;
+  recentSessions?: { id: number; title: string }[];
+  activeSessionId?: number | null;
 }) {
   const { theme, setTheme } = useTheme();
-  const { isConnected, publicKey, network, connect, disconnect, connecting } = useFreighter();
+  const {
+    isConnected,
+    publicKey,
+    type: walletType,
+    authUser,
+    connecting,
+    disconnect,
+    logout,
+    connectModalOpen,
+    setConnectModalOpen,
+    openConnectModal,
+    needsRecovery,
+    requiresRecoverySetup,
+    recoveryReady,
+  } = useWallet();
   const isMobile = useIsMobile();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [securityOpen, setSecurityOpen] = useState(false);
+  const [portfolioOpen, setPortfolioOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const showSun = theme === "dark";
+
+  // Derived display info
+  const walletLabel = walletType === "internal"
+    ? (authUser?.email ?? "Orbit Wallet")
+    : publicKey ? shorten(publicKey) : null;
+  const walletSub = walletType === "internal" ? "Orbit Wallet" : "Testnet";
+
+  const { data: betaNft } = useQuery({
+    queryKey: ["beta-nft-status", publicKey],
+    queryFn: async (): Promise<BetaNftStatus | null> => {
+      const res = await fetch(
+        `/api/nft/beta-status?wallet=${encodeURIComponent(publicKey!)}`
+      );
+      if (!res.ok) return null;
+      return res.json();
+    },
+    enabled: Boolean(isConnected && publicKey),
+    staleTime: 15_000,
+  });
+
+  const openPortfolio = useCallback(() => {
+    if (!isConnected || !publicKey) {
+      openConnectModal();
+      return;
+    }
+    setPortfolioOpen(true);
+    if (isMobile) setSidebarOpen(false);
+  }, [isConnected, publicKey, openConnectModal, isMobile]);
 
   useEffect(() => {
     setSidebarOpen(!isMobile);
@@ -77,28 +143,49 @@ export function Layout({
 
   const runSidebarAction = useCallback(
     (action: SidebarAction) => {
+      if (action.type === "open-portfolio") {
+        openPortfolio();
+        return;
+      }
       onSidebarAction?.(action);
       if (isMobile) setSidebarOpen(false);
     },
-    [isMobile, onSidebarAction]
+    [isMobile, onSidebarAction, openPortfolio]
   );
 
   const navItems = [
-    { icon: Search, label: "Search chats", action: { type: "focus-input" } as SidebarAction },
+    {
+      icon: Search,
+      label: "Search chats",
+      action: { type: "focus-input" } as SidebarAction,
+      onClick: () => {
+        setSearchQuery("");
+        setTimeout(() => searchInputRef.current?.focus(), 50);
+      },
+    },
     {
       icon: PieChart,
       label: "Portfolio",
-      action: { type: "prompt", prompt: "What's in my portfolio?" } as SidebarAction,
+      action: { type: "open-portfolio" } as SidebarAction,
+      onClick: openPortfolio,
     },
     {
       icon: TrendingUp,
       label: "Markets",
-      action: { type: "prompt", prompt: "Price of XLM" } as SidebarAction,
+      action: { type: "prefill", prompt: "Price of XLM" } as SidebarAction,
+      onClick: undefined,
     },
     {
       icon: LayoutGrid,
       label: "Protocols",
-      action: { type: "prompt", prompt: "What protocols are integrated?" } as SidebarAction,
+      action: { type: "prefill", prompt: "What protocols are integrated?" } as SidebarAction,
+      onClick: undefined,
+    },
+    {
+      icon: BookOpen,
+      label: "Learn DeFi",
+      action: { type: "prompt", prompt: "What is DeFi vs CeFi?" } as SidebarAction,
+      onClick: undefined,
     },
   ];
 
@@ -137,7 +224,7 @@ export function Layout({
           <button
             key={item.label}
             type="button"
-            onClick={() => runSidebarAction(item.action)}
+            onClick={() => item.onClick ? item.onClick() : runSidebarAction(item.action)}
             className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-sidebar-foreground transition-colors hover:bg-primary/10 hover:text-primary active:bg-primary/15"
           >
             <item.icon className="h-4 w-4 shrink-0 text-primary/70" />
@@ -147,17 +234,66 @@ export function Layout({
       </nav>
 
       <div className="mt-4 flex-1 overflow-y-auto px-2">
-        <p className="px-3 pb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <div className="px-1 pb-2">
+          <div className="flex items-center gap-1.5 rounded-lg border border-sidebar-border bg-background/50 px-2.5 py-1.5">
+            <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <input
+              ref={searchInputRef}
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search chats…"
+              className="flex-1 bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+        </div>
+        <p className="px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           Recents
         </p>
-        {recentTitle ? (
-          <button
-            type="button"
-            onClick={() => isMobile && setSidebarOpen(false)}
-            className="w-full truncate rounded-lg bg-orbit-gradient-subtle px-3 py-2 text-left text-sm font-medium text-foreground ring-1 ring-primary/15"
-          >
-            {recentTitle}
-          </button>
+        {recentSessions && recentSessions.length > 0 ? (
+          <div className="flex flex-col gap-0.5">
+            {recentSessions
+              .filter((s) =>
+                searchQuery.trim()
+                  ? s.title.toLowerCase().includes(searchQuery.toLowerCase())
+                  : true
+              )
+              .map((session) => (
+                <button
+                  key={session.id}
+                  type="button"
+                  onClick={() =>
+                    runSidebarAction({
+                      type: "select-session",
+                      sessionId: session.id,
+                    })
+                  }
+                  className={cn(
+                    "w-full truncate rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-primary/10",
+                    activeSessionId === session.id
+                      ? "bg-orbit-gradient-subtle font-medium text-foreground ring-1 ring-primary/15"
+                      : "text-sidebar-foreground"
+                  )}
+                >
+                  {session.title}
+                </button>
+              ))}
+            {searchQuery.trim() &&
+              recentSessions.filter((s) =>
+                s.title.toLowerCase().includes(searchQuery.toLowerCase())
+              ).length === 0 && (
+                <p className="px-3 py-2 text-xs text-muted-foreground">No results</p>
+              )}
+          </div>
         ) : (
           <p className="px-3 text-xs text-muted-foreground">No chats yet</p>
         )}
@@ -165,27 +301,60 @@ export function Layout({
 
       <div className="border-t border-sidebar-border p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         {isConnected && publicKey ? (
-          <div className="flex items-center gap-2 rounded-xl px-2 py-2 hover:bg-primary/5">
+          <div className="space-y-2">
+            {needsRecovery && recoveryReady && (
+              <button
+                type="button"
+                onClick={openConnectModal}
+                className="w-full rounded-lg border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-left text-xs text-amber-600 dark:text-amber-300"
+              >
+                Restore this device (email + authenticator)
+              </button>
+            )}
+            {requiresRecoverySetup && (
+              <button
+                type="button"
+                onClick={openConnectModal}
+                className="w-full rounded-lg border border-red-500/40 bg-red-500/10 px-2 py-1.5 text-left text-xs text-red-600 dark:text-red-300"
+              >
+                Set email + authenticator — required to recover a lost phone
+              </button>
+            )}
+            <div className="flex items-center gap-2 rounded-xl px-2 py-2 hover:bg-primary/5">
             <div className="flex h-8 w-8 items-center justify-center rounded-full bg-orbit-gradient text-xs font-semibold text-white">
-              {publicKey.slice(1, 3)}
+              {walletType === "internal" ? <Mail className="h-4 w-4" /> : publicKey.slice(1, 3)}
             </div>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium">{shorten(publicKey)}</p>
-              <p className="text-xs text-primary/80">{network ?? "Testnet"}</p>
+              <p className="truncate text-sm font-medium">{walletLabel}</p>
+              <p className="text-xs text-primary/80">{walletSub}</p>
             </div>
-            <button
-              type="button"
-              onClick={disconnect}
-              className="rounded-lg p-1.5 text-muted-foreground hover:bg-primary/10 hover:text-primary"
-              aria-label="Disconnect"
-            >
-              <LogOut className="h-4 w-4" />
-            </button>
+            <div className="flex items-center gap-0.5">
+              {walletType === "internal" && (
+                <button
+                  type="button"
+                  onClick={() => setSecurityOpen(true)}
+                  className="rounded-lg p-1.5 text-muted-foreground hover:bg-primary/10 hover:text-primary"
+                  aria-label="Security settings"
+                  title="Security settings"
+                >
+                  <Shield className="h-4 w-4" />
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => walletType === "internal" ? logout() : disconnect()}
+                className="rounded-lg p-1.5 text-muted-foreground hover:bg-primary/10 hover:text-primary"
+                aria-label="Disconnect"
+              >
+                <LogOut className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
           </div>
         ) : (
           <button
             type="button"
-            onClick={connect}
+            onClick={openConnectModal}
             disabled={connecting}
             className="flex w-full items-center gap-2 rounded-xl px-2 py-2 text-sm font-medium hover:bg-primary/5"
           >
@@ -196,7 +365,7 @@ export function Layout({
                 <Wallet className="h-4 w-4" />
               )}
             </div>
-            Connect Freighter
+            Connect wallet
           </button>
         )}
       </div>
@@ -260,7 +429,46 @@ export function Layout({
             </button>
           </div>
           <div className="flex shrink-0 items-center gap-1">
-            <FeedbackDialog />
+            {betaNft?.canClaim && (
+              <button
+                type="button"
+                onClick={() =>
+                  onSidebarAction?.({
+                    type: "prompt",
+                    prompt:
+                      "i have submitted my feedback, mint my beta tester nft",
+                  })
+                }
+                className="mr-0.5 inline-flex items-center gap-1 rounded-full border border-primary/30 bg-orbit-gradient-subtle px-2.5 py-1 text-xs font-medium text-primary hover:bg-primary/10"
+                title="Claim your Orbit beta tester NFT"
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Claim NFT</span>
+              </button>
+            )}
+            {isConnected && publicKey && (
+              <button
+                type="button"
+                onClick={openPortfolio}
+                className="rounded-lg p-2 text-muted-foreground hover:bg-primary/10 hover:text-primary"
+                aria-label="Open portfolio"
+                title="Portfolio"
+              >
+                <PieChart className="h-4 w-4" />
+              </button>
+            )}
+            <FeedbackDialog
+              onWhitelisted={(prompt) =>
+                onSidebarAction?.({ type: "prompt", prompt })
+              }
+            />
+            <Link
+              href="/settings"
+              className="rounded-lg p-2 text-muted-foreground hover:bg-primary/10 hover:text-primary"
+              aria-label="Settings"
+            >
+              <Settings className="h-4 w-4" />
+            </Link>
             <Link
               href="/stats"
               className="rounded-lg p-2 text-muted-foreground hover:bg-primary/10 hover:text-primary"
@@ -276,14 +484,14 @@ export function Layout({
             >
               {showSun ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </button>
-            {!isConnected && (
+            {(!isConnected || needsRecovery || requiresRecoverySetup) && (
               <button
                 type="button"
-                onClick={connect}
+                onClick={openConnectModal}
                 disabled={connecting}
                 className="ml-1 rounded-full bg-orbit-gradient px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:opacity-90"
               >
-                {connecting ? "…" : "Connect"}
+                {connecting ? "…" : needsRecovery ? "Restore" : "Connect"}
               </button>
             )}
           </div>
@@ -291,6 +499,19 @@ export function Layout({
 
         <main className="flex min-h-0 flex-1 flex-col">{children}</main>
       </div>
+
+      {/* Modals */}
+      <WalletConnectModal open={connectModalOpen} onOpenChange={setConnectModalOpen} />
+      <SecuritySettings open={securityOpen} onOpenChange={setSecurityOpen} />
+      <PortfolioDrawer
+        open={portfolioOpen}
+        onClose={() => setPortfolioOpen(false)}
+        publicKey={publicKey}
+        onAction={(command) => {
+          setPortfolioOpen(false);
+          onSidebarAction?.({ type: "prompt", prompt: command });
+        }}
+      />
     </div>
   );
 }

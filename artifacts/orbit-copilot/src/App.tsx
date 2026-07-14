@@ -5,10 +5,11 @@ import { Analytics } from "@vercel/analytics/react";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/components/theme-provider";
-import { FreighterProvider } from "@/hooks/use-freighter";
+import { WalletProvider } from "@/hooks/use-wallet";
 import { track } from "@/lib/analytics";
 import ChatPage from "@/pages/chat";
 import StatsPage from "@/pages/stats";
+import SettingsPage from "@/pages/settings";
 
 const queryClient = new QueryClient();
 
@@ -21,6 +22,7 @@ function Router() {
     <Switch>
       <Route path="/" component={ChatPage} />
       <Route path="/stats" component={StatsPage} />
+      <Route path="/settings" component={SettingsPage} />
       <Route component={ChatPage} />
     </Switch>
   );
@@ -29,7 +31,7 @@ function Router() {
 function App() {
   return (
     <ThemeProvider defaultTheme="light" storageKey="orbit-theme">
-      <FreighterProvider>
+      <WalletProvider>
         <QueryClientProvider client={queryClient}>
           <TooltipProvider>
             <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
@@ -39,7 +41,7 @@ function App() {
             <Analytics />
           </TooltipProvider>
         </QueryClientProvider>
-      </FreighterProvider>
+      </WalletProvider>
     </ThemeProvider>
   );
 }

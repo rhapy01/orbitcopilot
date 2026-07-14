@@ -1,6 +1,6 @@
 import type { ChatAction } from "@/components/transaction-action-card";
 
-/** Plain-language confidence notes shown before Freighter sign. */
+/** Plain-language confidence notes shown before wallet sign. */
 export function actionConfidence(action: ChatAction): {
   protocol: string;
   walletScope: string;
@@ -13,11 +13,13 @@ export function actionConfidence(action: ChatAction): {
   else if (type.startsWith("blend_")) protocol = "Blend";
   else if (type.startsWith("predict_")) protocol = "Orbit Predict (Soroban)";
   else if (type.startsWith("perp_")) protocol = "Orbit Perps (Soroban)";
+  else if (type.startsWith("nft_")) protocol = "Orbit NFT (Soroban)";
+  else if (type === "aquarius_swap") protocol = "Aquarius AMM";
   else if (type === "swap" || type === "send") protocol = "Stellar Classic (Horizon)";
 
   const risks: string[] = [
     "Testnet only — not mainnet funds",
-    "Only your connected Freighter wallet can sign",
+    "Only your connected wallet can sign (Freighter or Orbit embedded)",
     "Orbit never custody balances — settlement is on-chain",
   ];
 
@@ -28,7 +30,8 @@ export function actionConfidence(action: ChatAction): {
   if (
     type === "swap" ||
     type === "steldex_swap" ||
-    type === "soroswap_swap"
+    type === "soroswap_swap" ||
+    type === "aquarius_swap"
   ) {
     risks.push("Receive amount is an estimate — slippage can apply");
     risks.push("Keep a small XLM reserve for network fees");
@@ -44,6 +47,9 @@ export function actionConfidence(action: ChatAction): {
   if (type.startsWith("predict_") || type.startsWith("perp_")) {
     risks.push("You can lose stake or margin — high risk");
   }
+  if (type.startsWith("nft_")) {
+    risks.push("NFT trades settle in XLM on-chain");
+  }
 
   const assetBits = [action.sendAsset, action.destAsset, action.pair]
     .filter(Boolean)
@@ -53,7 +59,7 @@ export function actionConfidence(action: ChatAction): {
     protocol,
     walletScope: assetBits
       ? `Affects: ${assetBits} on this wallet only`
-      : "Affects this Freighter wallet only",
+      : "Affects this connected wallet only",
     risks,
   };
 }
@@ -75,5 +81,8 @@ export function outcomeSummary(action: ChatAction): string {
                 : action.type.startsWith("perp_")
                   ? `Perps action`
                   : `On-chain action (${action.type})`;
+  if (action.type === "steldex_swap" && action.destAsset) {
+    return `${title.trim()} — confirmed on Stellar Testnet. Ask “what’s my ${action.destAsset} balance?” to verify (Soroban tokens).`;
+  }
   return `${title.trim()} — confirmed on Stellar Testnet`;
 }

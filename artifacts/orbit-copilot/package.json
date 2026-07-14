@@ -75,7 +75,10 @@
     "zod": "catalog:"
   },
   "dependencies": {
+    "@simplewebauthn/browser": "^10.0.0",
     "@stellar/freighter-api": "^6.0.1",
-    "@vercel/analytics": "^2.0.1"
+    "@vercel/analytics": "^2.0.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
   }
 }

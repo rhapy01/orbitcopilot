@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Check, Circle, Wallet, Droplets, MessageCircle } from "lucide-react";
-import { useFreighter } from "@/hooks/use-freighter";
+import { useWallet } from "@/hooks/use-wallet";
 import { track } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
 
@@ -33,12 +33,14 @@ export function OnboardingChecklist({
   hasChatted: boolean;
   onFund?: () => void;
 }) {
-  const { isConnected, publicKey, connect, connecting } = useFreighter();
+  const { isConnected, publicKey, openConnectModal, connecting } = useWallet();
   const [steps, setSteps] = useState<Steps>(() =>
     typeof window !== "undefined"
       ? loadSteps()
       : { connect: false, fund: false, chat: false }
   );
+  const [funding, setFunding] = useState(false);
+  const [fundError, setFundError] = useState<string | null>(null);
   const [dismissed, setDismissed] = useState(() => {
     try {
       return localStorage.getItem("orbit-onboarding-dismissed") === "1";
@@ -71,18 +73,49 @@ export function OnboardingChecklist({
     }
   }, [hasChatted, steps, publicKey]);
 
+  async function handleFund() {
+    if (!publicKey || funding) return;
+    setFunding(true);
+    setFundError(null);
+    try {
+      const res = await fetch("/api/friendbot/fund", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ publicKey }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        setFundError(data.message || data.error || "Friendbot funding failed");
+        onFund?.();
+        return;
+      }
+      const next = { ...steps, fund: true };
+      setSteps(next);
+      saveSteps(next);
+      track("onboarding_step", {
+        walletPublicKey: publicKey,
+        metadata: { step: "fund" },
+      });
+    } catch (err: any) {
+      setFundError(err?.message ?? "Friendbot funding failed");
+      onFund?.();
+    } finally {
+      setFunding(false);
+    }
+  }
+
   if (dismissed) return null;
 
   const items = [
     {
       key: "connect" as const,
-      label: "Connect Freighter (Testnet)",
+      label: "Connect your wallet",
       done: steps.connect || isConnected,
       icon: Wallet,
       action: !isConnected ? (
         <button
           type="button"
-          onClick={connect}
+          onClick={openConnectModal}
           disabled={connecting}
           className="text-xs font-medium text-primary hover:underline"
         >
@@ -98,19 +131,11 @@ export function OnboardingChecklist({
       action: (
         <button
           type="button"
-          onClick={() => {
-            const next = { ...steps, fund: true };
-            setSteps(next);
-            saveSteps(next);
-            track("onboarding_step", {
-              walletPublicKey: publicKey,
-              metadata: { step: "fund" },
-            });
-            onFund?.();
-          }}
-          className="text-xs font-medium text-primary hover:underline"
+          onClick={handleFund}
+          disabled={!publicKey || funding}
+          className="text-xs font-medium text-primary hover:underline disabled:opacity-50"
         >
-          Fund
+          {funding ? "Funding…" : "Fund"}
         </button>
       ),
     },
@@ -174,6 +199,9 @@ export function OnboardingChecklist({
           </li>
         ))}
       </ul>
+      {fundError && (
+        <p className="mt-2 text-[11px] text-destructive">{fundError}</p>
+      )}
     </div>
   );
 }

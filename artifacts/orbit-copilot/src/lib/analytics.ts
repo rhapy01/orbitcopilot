@@ -3,6 +3,7 @@ export type AnalyticsEvent =
   | "wallet_connect"
   | "wallet_disconnect"
   | "chat_send"
+  | "chat_new"
   | "chat_clear"
   | "tx_sign"
   | "tx_submit"
