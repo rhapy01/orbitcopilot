@@ -108,6 +108,11 @@ export function FreighterProvider({ children }: { children: React.ReactNode }) {
 
   const disconnect = useCallback(() => {
     track("wallet_disconnect", { walletPublicKey: publicKey });
+    // Clear stored session so next connection starts fresh
+    try {
+      const key = `orbit-active-session-${publicKey ?? "anon"}`;
+      sessionStorage.removeItem(key);
+    } catch { /* ignore */ }
     setPublicKey(null);
     setNetwork(null);
     setNetworkPassphrase(null);
