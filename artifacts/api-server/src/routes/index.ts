@@ -16,6 +16,7 @@ import friendbotRouter from "./friendbot";
 import protocolsRouter from "./protocols";
 import predictRouter from "./predict";
 import perpsRouter from "./perps";
+import nftRouter from "./nft";
 import productRouter from "./product";
 
 const router: IRouter = Router();
@@ -38,5 +39,6 @@ router.use(friendbotRouter);
 router.use(protocolsRouter);
 router.use(predictRouter);
 router.use(perpsRouter);
+router.use(nftRouter);
 
 export default router;

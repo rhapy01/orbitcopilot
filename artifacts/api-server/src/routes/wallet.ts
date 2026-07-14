@@ -6,7 +6,11 @@ import {
   getAssetPrice,
   buildTransaction,
   submitSignedTransaction,
+  buildAddTrustlineTransaction,
+  resolveClassicTrustline,
+  SOROBAN_ASSET_ISSUERS,
 } from "../lib/stellar";
+import { getSteldexWalletBalances } from "../lib/steldex";
 import {
   GetWalletResponse,
   GetWalletAssetsResponse,
@@ -64,12 +68,31 @@ router.get("/wallet/assets", async (req, res): Promise<void> => {
   const publicKey = typeof req.query.publicKey === "string" ? req.query.publicKey.trim() : null;
 
   try {
+    let address: string;
     let balances;
     if (publicKey) {
+      address = publicKey;
       balances = await getAccountBalances(publicKey);
     } else {
       const keypair = await getDemoKeypair();
-      balances = await getAccountBalances(keypair.publicKey());
+      address = keypair.publicKey();
+      balances = await getAccountBalances(address);
+    }
+
+    const steldex = await getSteldexWalletBalances(address).catch(() => []);
+    const seen = new Set(
+      balances.map((b) => (b.assetCode.toUpperCase() === "CUSDC" ? "USDC" : b.assetCode.toUpperCase()))
+    );
+    for (const s of steldex) {
+      const code = s.asset.toUpperCase() === "CUSDC" ? "USDC" : s.asset;
+      if (seen.has(code.toUpperCase())) continue;
+      balances.push({
+        assetCode: code,
+        assetIssuer: null,
+        balance: s.balance,
+        logoUrl: null,
+      });
+      seen.add(code.toUpperCase());
     }
 
     const assets = await Promise.all(
@@ -184,6 +207,37 @@ router.post("/wallet/submit-transaction", async (req, res): Promise<void> => {
 
   const result = await submitSignedTransaction(parsed.data.signedXdr, parsed.data.networkPassphrase);
   res.json(SubmitTransactionResponse.parse(result));
+});
+
+router.post("/wallet/add-trustline", async (req, res): Promise<void> => {
+  try {
+    const { walletAddress, assetCode, assetIssuer } = req.body as {
+      walletAddress?: string;
+      assetCode?: string;
+      assetIssuer?: string;
+    };
+    if (!walletAddress || !assetCode) {
+      res.status(400).json({ error: "walletAddress and assetCode are required" });
+      return;
+    }
+    // Resolve issuer: use provided, classic SAC map (cUSDC→USDC), or known issuers
+    const classic = resolveClassicTrustline(assetCode);
+    const code = classic?.assetCode ?? assetCode;
+    const issuer =
+      assetIssuer ?? classic?.assetIssuer ?? SOROBAN_ASSET_ISSUERS[assetCode.toUpperCase()];
+    if (!issuer) {
+      res.status(400).json({ error: `Unknown issuer for ${assetCode}. Provide assetIssuer.` });
+      return;
+    }
+    const { xdr, networkPassphrase } = await buildAddTrustlineTransaction(
+      walletAddress,
+      code,
+      issuer
+    );
+    res.json({ xdr, networkPassphrase, assetCode: code, assetIssuer: issuer });
+  } catch (err: any) {
+    res.status(400).json({ error: err?.message ?? "Failed to build trustline transaction" });
+  }
 });
 
 export default router;

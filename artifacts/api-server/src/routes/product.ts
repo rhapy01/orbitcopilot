@@ -3,6 +3,7 @@ import {
   getProductStats,
   insertFeedback,
   recordWalletEvent,
+  resolveBetaNftStatus,
 } from "../lib/product-store";
 
 const router: IRouter = Router();
@@ -12,6 +13,7 @@ const EVENT_TYPES = new Set([
   "wallet_connect",
   "wallet_disconnect",
   "chat_send",
+  "chat_new",
   "chat_clear",
   "tx_sign",
   "tx_submit",
@@ -77,12 +79,14 @@ router.post("/feedback", async (req, res): Promise<void> => {
       typeof req.body?.walletPublicKey === "string"
         ? req.body.walletPublicKey.trim()
         : null;
-    if (wallet && !/^G[A-Z2-7]{55}$/.test(wallet)) {
-      res.status(400).json({ error: "Invalid walletPublicKey" });
+    if (!wallet || !/^G[A-Z2-7]{55}$/.test(wallet)) {
+      res.status(400).json({
+        error: "Connect a wallet first — feedback unlocks your Orbit Beta Tester NFT",
+      });
       return;
     }
 
-    await insertFeedback({
+    const result = await insertFeedback({
       walletPublicKey: wallet,
       rating,
       message,
@@ -90,13 +94,37 @@ router.post("/feedback", async (req, res): Promise<void> => {
     await recordWalletEvent({
       walletPublicKey: wallet,
       eventType: "feedback_open",
-      metadata: { rating },
+      metadata: { rating, betaNftWhitelisted: result.betaNft.whitelisted },
     });
-    res.status(201).json({ ok: true });
+    res.status(201).json({
+      ok: true,
+      feedbackId: result.feedbackId,
+      betaNft: result.betaNft,
+    });
   } catch (err) {
     console.error("[feedback] POST failed:", err);
     res.status(503).json({
       error: err instanceof Error ? err.message : "Failed to save feedback",
+    });
+  }
+});
+
+router.get("/nft/beta-status", async (req, res): Promise<void> => {
+  const wallet =
+    typeof req.query.wallet === "string" ? req.query.wallet.trim() : "";
+  if (!wallet || !/^G[A-Z2-7]{55}$/.test(wallet)) {
+    res.status(400).json({ error: "wallet query required" });
+    return;
+  }
+  try {
+    const status = await resolveBetaNftStatus(wallet);
+    res.json({
+      ...status,
+      canClaim: status.eligible && !status.claimed,
+    });
+  } catch (err) {
+    res.status(503).json({
+      error: err instanceof Error ? err.message : "Status unavailable",
     });
   }
 });
@@ -123,6 +151,8 @@ router.get("/feedback/summary", async (_req, res): Promise<void> => {
       `Responses: ${stats.feedback.total}`,
       `Average rating: ${stats.feedback.averageRating}/5`,
       `Unique wallets with events: ${stats.events.uniqueWallets}`,
+      `Beta NFT whitelisted: ${stats.betaNft?.whitelisted ?? 0}`,
+      `Beta NFT claimed: ${stats.betaNft?.claimed ?? 0}`,
       `Level 4 user target (10+): ${stats.level4.usersTargetMet ? "MET" : "in progress"}`,
       "",
       "Recent comments:",

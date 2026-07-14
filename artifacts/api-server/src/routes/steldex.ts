@@ -115,8 +115,9 @@ router.post("/steldex/swap-quote", async (req, res): Promise<void> => {
     return;
   }
   try {
-    const result = await getSteldexSwapQuote(parsed.data);
-    res.json(GetSteldexSwapQuoteResponse.parse(result));
+    const result = await getSteldexSwapQuote(parsed.data as Record<string, unknown>);
+    // Pass the full upstream response — field names vary by API version
+    res.json(result);
   } catch (err: any) {
     req.log.error({ err }, "Failed to fetch StelDex swap quote");
     res.status(400).json({ error: err?.message ?? "Failed to fetch swap quote" });

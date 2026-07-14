@@ -67,6 +67,27 @@ router.post("/predict/bet", async (req, res): Promise<void> => {
   }
 });
 
+router.post("/predict/claim", async (req, res): Promise<void> => {
+  const walletAddress =
+    typeof req.body?.walletAddress === "string" ? req.body.walletAddress.trim() : "";
+  const marketHint = typeof req.body?.marketHint === "string" ? req.body.marketHint.trim() : "";
+  const outcomeRaw = typeof req.body?.outcome === "string" ? req.body.outcome.trim().toLowerCase() : "yes";
+  const outcome = outcomeRaw === "no" || outcomeRaw === "n" ? "no" : "yes";
+
+  if (!walletAddress || !marketHint) {
+    res.status(400).json({ error: "walletAddress, marketHint required" });
+    return;
+  }
+
+  try {
+    const { preparePredictionClaim } = await import("../lib/predict");
+    const result = await preparePredictionClaim({ walletAddress, marketHint, outcome });
+    res.status(201).json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err?.message ?? "Claim failed" });
+  }
+});
+
 router.post("/predict/confirm", async (req, res): Promise<void> => {
   const positionId = Number(req.body?.positionId);
   const txHash = typeof req.body?.txHash === "string" ? req.body.txHash.trim() : "";
