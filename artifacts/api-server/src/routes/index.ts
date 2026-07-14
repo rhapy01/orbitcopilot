@@ -1,5 +1,7 @@
 import { Router, type IRouter } from "express";
 import healthRouter from "./health";
+import authRouter from "./auth";
+import internalWalletRouter from "./internal-wallet";
 import chatRouter from "./chat";
 import walletRouter from "./wallet";
 import portfolioRouter from "./portfolio";
@@ -20,6 +22,8 @@ const router: IRouter = Router();
 
 router.use(healthRouter);
 router.use(productRouter);
+router.use(authRouter);
+router.use(internalWalletRouter);
 router.use(chatRouter);
 router.use(walletRouter);
 router.use(portfolioRouter);
