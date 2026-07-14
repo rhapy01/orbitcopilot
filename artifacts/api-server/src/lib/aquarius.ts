@@ -1,5 +1,6 @@
 import { logger } from "./logger";
 import { withRetry } from "./retry";
+import { NETWORK_PASSPHRASE, SOROBAN_RPC } from "./stellar";
 
 /**
  * Aquarius AMM — https://docs.aqua.network/developers/code-examples/prerequisites-and-basics
@@ -210,6 +211,100 @@ export async function formatAquariusQuote(
     `Pools: ${quote.pools.length} hop(s)`,
     `Path: ${quote.tokens.join(" → ")}`,
     "",
-    "Execution: use \"Swap …\" to route via Soroswap (includes Aquarius) when the aggregator is up, or classic DEX for XLM/USDC.",
+    `Say "aquarius swap ${amount} ${quote.tokenIn} to ${quote.tokenOut}" to sign the router invoke on Testnet.`,
   ].join("\n");
+}
+
+/** Build a prepared Soroban invoke of Aquarius `swap_chained` from a find-path quote. */
+export async function buildAquariusSwap(input: {
+  walletAddress: string;
+  fromSymbol: string;
+  toSymbol: string;
+  amount: string;
+  slippageBps?: number;
+}): Promise<{
+  xdr: string;
+  networkPassphrase: string;
+  estimatedDestAmount: string;
+  tokenIn: string;
+  tokenOut: string;
+  amountIn: string;
+  pools: string[];
+}> {
+  const from = resolveAquariusToken(input.fromSymbol);
+  const to = resolveAquariusToken(input.toSymbol);
+  if (!from || !to) {
+    throw new Error(
+      `Aquarius supports: ${Object.keys(AQUARIUS_TOKENS).join(", ")}. Got ${input.fromSymbol}/${input.toSymbol}.`
+    );
+  }
+
+  const quote = await findAquariusPath({
+    fromSymbol: input.fromSymbol,
+    toSymbol: input.toSymbol,
+    amount: input.amount,
+  });
+  if (!quote.swapChainXdr) {
+    throw new Error("Aquarius quote returned no swap_chain_xdr");
+  }
+
+  const slippageBps = Math.min(Math.max(input.slippageBps ?? 50, 1), 500);
+  const amountOut = BigInt(quote.amountOut);
+  const outMin = (amountOut * BigInt(10_000 - slippageBps)) / 10_000n;
+
+  const {
+    Contract,
+    TransactionBuilder,
+    Networks,
+    BASE_FEE,
+    Address,
+    nativeToScVal,
+    xdr,
+  } = await import("@stellar/stellar-sdk");
+  const { Server, assembleTransaction } = await import("@stellar/stellar-sdk/rpc");
+
+  const rpc = new Server(SOROBAN_RPC);
+  const account = await rpc.getAccount(input.walletAddress);
+  const contract = new Contract(AQUARIUS_ROUTER);
+
+  const userSc = Address.fromString(input.walletAddress).toScVal();
+  const swapChainSc = xdr.ScVal.fromXDR(quote.swapChainXdr, "base64");
+  const tokenInSc = Address.fromString(from.contract).toScVal();
+  const amountInSc = nativeToScVal(BigInt(quote.amountIn), { type: "u128" });
+  const outMinSc = nativeToScVal(outMin, { type: "u128" });
+
+  const op = contract.call(
+    "swap_chained",
+    userSc,
+    swapChainSc,
+    tokenInSc,
+    amountInSc,
+    outMinSc
+  );
+
+  const tx = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: Networks.TESTNET,
+  })
+    .addOperation(op)
+    .setTimeout(180)
+    .build();
+
+  const simulated = await rpc.simulateTransaction(tx);
+  const simErr = (simulated as { error?: string })?.error;
+  if (simErr) {
+    throw new Error(`Aquarius simulation failed: ${simErr}`);
+  }
+
+  const assembled = assembleTransaction(tx, simulated).build();
+
+  return {
+    xdr: assembled.toXDR(),
+    networkPassphrase: NETWORK_PASSPHRASE,
+    estimatedDestAmount: quote.amountOutHuman,
+    tokenIn: quote.tokenIn,
+    tokenOut: quote.tokenOut,
+    amountIn: input.amount,
+    pools: quote.pools,
+  };
 }

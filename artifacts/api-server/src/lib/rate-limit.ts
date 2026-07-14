@@ -1,7 +1,7 @@
 import type { Request, Response, NextFunction } from "express";
 import { rateLimitIncr } from "./redis";
 
-/** Redis-backed rate limiter (per IP + optional wallet). Part of the data plane. */
+/** Redis-backed rate limiter (per IP + optional wallet). Fail-open if Redis is down. */
 export function rateLimit(opts: { windowMs?: number; max?: number } = {}) {
   const windowMs = opts.windowMs ?? 60_000;
   const max = opts.max ?? 60;
@@ -28,10 +28,10 @@ export function rateLimit(opts: { windowMs?: number; max?: number } = {}) {
       }
       next();
     } catch (err) {
-      req.log?.error?.({ err }, "Rate limit Redis error");
-      res.status(503).json({
-        error: "Rate limiter unavailable (Redis). Check REDIS_URL.",
-      });
+      // Prefer availability over hard lockout when Redis is misconfigured/down
+      req.log?.warn?.({ err }, "Rate limit Redis unavailable — allowing request");
+      res.setHeader("X-RateLimit-Bypass", "redis-unavailable");
+      next();
     }
   };
 }

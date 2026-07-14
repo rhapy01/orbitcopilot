@@ -68,23 +68,55 @@ export async function getLiveDefiOpportunities(): Promise<LiveOpportunity[]> {
   }
 
   try {
-    const contracts = await getSteldexContracts();
-    for (const pool of contracts.pools.slice(0, 8)) {
+    const { getDemoKeypair } = await import("./stellar");
+    const { getSteldexFarmPools } = await import("./steldex");
+    const demo = await getDemoKeypair();
+    const farmPools = (await getSteldexFarmPools(demo.publicKey())) as any[];
+    const seen = new Set<string>();
+    for (const pool of farmPools.slice(0, 12)) {
+      const pair = String(pool.pair ?? pool.poolContract ?? "pool");
+      if (seen.has(pair)) continue;
+      seen.add(pair);
+      const apr = Number(
+        pool.farm?.baseAprPercent ??
+          pool.farm?.aprPercent ??
+          pool.baseAprPercent ??
+          0
+      );
+      const tvl = Number(pool.tvlUsd ?? pool.userValueUsd ?? 0) || 0;
       out.push({
-        id: `steldex-${pool.contract}`,
+        id: `steldex-${pool.poolContract ?? pair}`,
         protocol: "StelDex",
         type: "farm",
-        assetCode: pool.pair,
-        apy: 0,
-        tvlUsd: 0,
+        assetCode: pair,
+        apy: Number.isFinite(apr) && apr > 0 && apr < 100_000 ? apr : 0,
+        tvlUsd: tvl,
         riskLevel: "medium",
-        description: `StelDex pool ${pool.pair} — LP, stake, claim STELLAR rewards`,
+        description: `StelDex pool ${pair} — LP, stake, claim STELLAR rewards`,
         minDeposit: 0,
         rewards: ["STELLAR"],
       });
     }
   } catch {
-    // skip
+    try {
+      const contracts = await getSteldexContracts();
+      for (const pool of contracts.pools.slice(0, 8)) {
+        out.push({
+          id: `steldex-${pool.contract}`,
+          protocol: "StelDex",
+          type: "farm",
+          assetCode: pool.pair,
+          apy: 0,
+          tvlUsd: 0,
+          riskLevel: "medium",
+          description: `StelDex pool ${pool.pair} — LP, stake, claim STELLAR rewards`,
+          minDeposit: 0,
+          rewards: ["STELLAR"],
+        });
+      }
+    } catch {
+      // skip
+    }
   }
 
   if (soroswapConfigured()) {
@@ -141,9 +173,15 @@ export async function formatLiveDefiCatalog(): Promise<string> {
   if (!opps.length) {
     return "No live DeFi listings right now. Try StelDex, Blend, or Aquarius individually.";
   }
-  const lines = opps.map(
-    (o) => `• ${o.protocol} — ${o.type} ${o.assetCode}: ${o.description}`
-  );
+  const lines = opps.map((o) => {
+    const apyLabel =
+      o.apy > 0
+        ? `${o.apy.toFixed(2)}% APY`
+        : "APY not published on this testnet feed";
+    const tvlLabel =
+      o.tvlUsd > 0 ? ` · volume/TVL signal ~$${Math.round(o.tvlUsd)}` : "";
+    return `• ${o.protocol} — ${o.type} ${o.assetCode} (${apyLabel}${tvlLabel}): ${o.description}`;
+  });
   let extra = "";
   try {
     extra = "\n\n" + (await formatSoroswapStatus());
@@ -155,5 +193,13 @@ export async function formatLiveDefiCatalog(): Promise<string> {
   } catch {
     // ignore
   }
-  return ["Live DeFi on Stellar Testnet:", "", ...lines].join("\n") + extra;
+  return (
+    [
+      "Live DeFi on Stellar Testnet:",
+      "",
+      "Note: many testnet indexes do not expose reliable APY — treat rates as unknown unless stated.",
+      "",
+      ...lines,
+    ].join("\n") + extra
+  );
 }

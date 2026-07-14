@@ -13,12 +13,13 @@ export type ProtocolId =
   | "friendbot"
   | "phoenix"
   | "orbit-predict"
-  | "orbit-perps";
+  | "orbit-perps"
+  | "orbit-nft";
 
 export interface ProtocolInfo {
   id: ProtocolId;
   name: string;
-  category: "wallet-infra" | "dex" | "amm" | "lending" | "oracle" | "aggregator" | "faucet";
+  category: "wallet-infra" | "dex" | "amm" | "lending" | "oracle" | "aggregator" | "faucet" | "nft";
   network: "testnet";
   status: "live" | "partial" | "external-down";
   capabilities: string[];
@@ -119,6 +120,15 @@ export const PROTOCOL_REGISTRY: ProtocolInfo[] = [
     capabilities: ["long-short", "leverage", "stop-loss", "take-profit", "close", "positions"],
     notes: "Soroban contract — USDC SAC margin held on-chain (contracts/orbit-perps)",
   },
+  {
+    id: "orbit-nft",
+    name: "Orbit NFT",
+    category: "nft",
+    network: "testnet",
+    status: "live",
+    capabilities: ["mint", "list", "buy", "transfer", "holdings"],
+    notes: "Soroban contract — XLM fixed-price marketplace (contracts/orbit-nft)",
+  },
 ];
 
 export function formatProtocolRegistry(): string {
@@ -132,6 +142,6 @@ export function formatProtocolRegistry(): string {
     "",
     ...lines,
     "",
-    "Everything is driven from chat. Connect Freighter on Testnet to act.",
+    "Everything is driven from chat. Connect Freighter or your Orbit wallet on Testnet to act.",
   ].join("\n");
 }

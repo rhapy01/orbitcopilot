@@ -1,4 +1,5 @@
 import { logger } from "./logger";
+import { resolveAssetCode } from "./fuzzy-normalize";
 
 const STELDEX_API_BASE = "https://stellar-swap-dex.vercel.app/api/stellar";
 
@@ -28,6 +29,16 @@ export function toSteldexUnits(human: string, decimals: number): string {
   return BigInt(whole + frac).toString();
 }
 
+export function fromSteldexUnits(raw: string, decimals: number): string {
+  const bi = BigInt(raw);
+  const base = 10n ** BigInt(decimals);
+  const whole = bi / base;
+  const frac = bi % base;
+  const fracStr = frac.toString().padStart(decimals, "0").replace(/0+$/, "");
+  if (!fracStr) return whole.toString();
+  return `${whole}.${fracStr}`;
+}
+
 export function steldexDecimals(symbol: string): number {
   const key = normalizeSteldexSymbol(symbol);
   return STELDEX_TOKEN_DECIMALS[key] ?? STELDEX_TOKEN_DECIMALS[key.toUpperCase()] ?? 7;
@@ -41,6 +52,12 @@ export function normalizeSteldexSymbol(raw: string): string {
   if (u === "XLM") return "XLM";
   if (u === "EURC") return "EURC";
   if (u === "STELLAR") return "STELLAR";
+  // Fuzzy typo tolerance (pudsc → pUSDC, xlmm → XLM)
+  const fuzzy = resolveAssetCode(raw);
+  if (fuzzy === "pUSDC" || fuzzy === "XLM" || fuzzy === "EURC" || fuzzy === "STELLAR") {
+    return fuzzy;
+  }
+  if (fuzzy === "USDC") return "cUSDC"; // Circle USDC on StelDex
   return raw.trim();
 }
 
@@ -297,6 +314,68 @@ export async function resolveSteldexToken(symbol: string): Promise<string | null
   return tokenMapLookup(contracts.tokens, symbol);
 }
 
+export type SteldexWalletBalance = {
+  asset: string;
+  balance: number;
+  raw: string;
+  contract: string;
+};
+
+/**
+ * Free (non-LP) StelDex token balances via Soroban SAC/SEP-41 `balance`.
+ * Horizon never shows pUSDC/cUSDC/STELLAR — without this, swaps look “successful but empty”.
+ */
+export async function getSteldexWalletBalances(
+  walletAddress: string
+): Promise<SteldexWalletBalance[]> {
+  const { getSorobanTokenBalance } = await import("./onchain");
+  const contracts = await getSteldexContracts();
+  // Skip XLM (Horizon) and cUSDC (same Circle USDC SAC as classic USDC — shown as USDC).
+  const symbols = ["pUSDC", "EURC", "STELLAR"] as const;
+  const out: SteldexWalletBalance[] = [];
+
+  await Promise.all(
+    symbols.map(async (symbol) => {
+      const contract = tokenMapLookup(contracts.tokens, symbol);
+      if (!contract) return;
+      try {
+        const raw = await getSorobanTokenBalance(walletAddress, contract);
+        if (raw <= 0n) return;
+        const decimals = steldexDecimals(symbol);
+        const human = Number(fromSteldexUnits(raw.toString(), decimals));
+        if (!Number.isFinite(human) || human <= 0) return;
+        out.push({
+          asset: symbol,
+          balance: human,
+          raw: raw.toString(),
+          contract,
+        });
+      } catch (err) {
+        logger.warn({ err, symbol, walletAddress }, "StelDex token balance read failed");
+      }
+    })
+  );
+
+  return out;
+}
+
+/** Human-readable StelDex free-token balance for a single symbol (0 if missing). */
+export async function getSteldexTokenBalanceHuman(
+  walletAddress: string,
+  symbol: string
+): Promise<number> {
+  const canon = normalizeSteldexSymbol(symbol);
+  const contract = await resolveSteldexToken(canon);
+  if (!contract) return 0;
+  try {
+    const { getSorobanTokenBalance } = await import("./onchain");
+    const raw = await getSorobanTokenBalance(walletAddress, contract);
+    return Number(fromSteldexUnits(raw.toString(), steldexDecimals(canon)));
+  } catch {
+    return 0;
+  }
+}
+
 export function findRowForPair<T extends { pair?: string | null }>(
   rows: T[],
   symbolA: string,
@@ -312,35 +391,55 @@ export async function formatSteldexHoldings(wallet: string): Promise<string> {
     getSteldexOrders(wallet),
   ]);
 
-  const lines: string[] = ["Your StelDex positions (Stellar Testnet):", ""];
+  const lines: string[] = ["Your StelDex liquidity positions (Stellar Testnet):", ""];
 
   const lpRows = (farmPools as any[]).filter(
     (p) => p.lpLiquidity && p.lpLiquidity !== "0"
   );
+
   if (lpRows.length) {
-    lines.push("Liquidity:");
     for (const p of lpRows) {
-      lines.push(
-        `• ${p.pair}: LP ${p.lpLiquidity}` +
-          (p.availableToStake && p.availableToStake !== "0"
-            ? ` (available to stake: ${p.availableToStake})`
-            : "") +
-          (p.stakedLiquidity && p.stakedLiquidity !== "0"
-            ? ` (staked: ${p.stakedLiquidity})`
-            : "")
-      );
+      const sym0 = p.token0Symbol ?? "Token0";
+      const sym1 = p.token1Symbol ?? "Token1";
+
+      // Use the new stakedBalance + lpBalance fields if available
+      const staked = p.stakedBalance;
+      const unstaked = p.lpBalance;
+      const userValueUsd = p.userValueUsd ?? p.stakedBalance?.valueUsd ?? null;
+
+      const usdLine = userValueUsd != null
+        ? ` — $${Number(userValueUsd).toFixed(2)} USD total`
+        : "";
+
+      lines.push(`• ${p.pair}${usdLine} on StelDex`);
+
+      if (staked && (Number(staked.token0Amount) > 0 || Number(staked.token1Amount) > 0)) {
+        lines.push(
+          `  Staked: ${Number(staked.token0Amount).toFixed(4)} ${sym0} + ${Number(staked.token1Amount).toFixed(4)} ${sym1}`
+        );
+      }
+      if (unstaked && (Number(unstaked.token0Amount) > 0 || Number(unstaked.token1Amount) > 0)) {
+        lines.push(
+          `  Unstaked: ${Number(unstaked.token0Amount).toFixed(4)} ${sym0} + ${Number(unstaked.token1Amount).toFixed(4)} ${sym1}`
+        );
+      }
+
+      if (p.pendingRewardsHuman && Number(p.pendingRewardsHuman) > 0) {
+        lines.push(
+          `  Pending rewards: ${Number(p.pendingRewardsHuman).toFixed(2)} STELLAR (~$${Number(p.rewardsEarnedUsd ?? 0).toFixed(2)})`
+        );
+      }
     }
     lines.push("");
   }
 
-  const posRows = (positions as any[]).filter(Boolean);
+  // Farm positions not in lpRows
+  const posRows = (positions as any[]).filter(
+    (p) => !lpRows.some((r: any) => r.poolContract === p.poolContract)
+  );
   if (posRows.length) {
-    lines.push("Farm stakes:");
     for (const p of posRows) {
-      const liq = p.stake?.liquidity ?? p.liquidity ?? "?";
-      lines.push(
-        `• ${p.pair ?? p.poolContract}: liquidity ${liq} (ticks ${p.tickLower}…${p.tickUpper})`
-      );
+      lines.push(`• ${p.pair ?? p.poolContract} — staked in farm on StelDex`);
     }
     lines.push("");
   }
@@ -355,7 +454,7 @@ export async function formatSteldexHoldings(wallet: string): Promise<string> {
   }
 
   if (lpRows.length === 0 && posRows.length === 0 && orderRows.length === 0) {
-    return "No StelDex LP, farm, or open orders for this wallet on testnet. Try adding liquidity: \"add liquidity 10 XLM and 10 pUSDC\".";
+    return "No StelDex liquidity positions for this wallet on testnet. Try adding liquidity: \"add 10 XLM and 10 pUSDC to liquidity pool on StelDex\".";
   }
 
   lines.push(

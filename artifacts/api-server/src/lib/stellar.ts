@@ -71,6 +71,187 @@ export async function getAccountBalances(publicKey: string): Promise<StellarBala
   return _parseBalances(account.balances);
 }
 
+/** Known Soroban SAC issuers for common testnet assets. */
+const SOROBAN_ASSET_ISSUERS: Record<string, string> = {
+  USDC: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+  EURC: "GB3Q6QDZYTHWT7E5PVS3W7FUT5GVAFC5KSZFFLPU25GO7VTC3NM2ZTVO",
+  // Alias: StelDex labels Circle USDC as cUSDC
+  CUSDC: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+};
+
+/** Check if a wallet has a trustline for a given asset code (optionally issuer-specific). */
+export async function hasTrustline(
+  publicKey: string,
+  assetCode: string,
+  assetIssuer?: string | null
+): Promise<boolean> {
+  if (assetCode === "XLM" || assetCode.toUpperCase() === "XLM") return true;
+  try {
+    const balances = await getAccountBalances(publicKey);
+    const code = assetCode.toUpperCase();
+    return balances.some((b) => {
+      if (b.assetCode.toUpperCase() !== code) return false;
+      if (assetIssuer && b.assetIssuer && b.assetIssuer !== assetIssuer) return false;
+      return true;
+    });
+  } catch {
+    // Fail closed — missing trustline is safer than swapping into an untrusted asset
+    return false;
+  }
+}
+
+/**
+ * Classic asset code + issuer required before holding a StelDex / SAC destination.
+ * Custom SEP-41 tokens (pUSDC, STELLAR) return null — no classic trustline.
+ */
+export function resolveClassicTrustline(
+  symbol: string
+): { assetCode: string; assetIssuer: string } | null {
+  const u = symbol.trim().toUpperCase();
+  if (u === "XLM") return null;
+  // StelDex cUSDC is Circle testnet USDC SAC
+  if (u === "CUSDC" || u === "USDC") {
+    return { assetCode: "USDC", assetIssuer: SOROBAN_ASSET_ISSUERS.USDC };
+  }
+  if (u === "EURC") {
+    return { assetCode: "EURC", assetIssuer: SOROBAN_ASSET_ISSUERS.EURC };
+  }
+  // pUSDC / STELLAR are custom Soroban tokens (not classic SACs)
+  if (u === "PUSDC" || u === "STELLAR") return null;
+  const issuer = SOROBAN_ASSET_ISSUERS[u];
+  if (issuer) return { assetCode: u, assetIssuer: issuer };
+  return null;
+}
+
+/** Build an unsigned changeTrust transaction so a wallet can add a trustline. */
+export async function buildAddTrustlineTransaction(
+  sourcePublicKey: string,
+  assetCode: string,
+  assetIssuer: string
+): Promise<{ xdr: string; networkPassphrase: string }> {
+  const { TransactionBuilder, Networks, Operation, BASE_FEE, Asset } = await import("@stellar/stellar-sdk");
+  const account = await horizon.loadAccount(sourcePublicKey);
+  const asset = new Asset(assetCode, assetIssuer);
+  const tx = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: Networks.TESTNET,
+  })
+    .addOperation(Operation.changeTrust({ asset }))
+    .setTimeout(30)
+    .build();
+  return { xdr: tx.toXDR(), networkPassphrase: Networks.TESTNET };
+}
+
+export { SOROBAN_ASSET_ISSUERS };
+
+/** Symbols an action may need classic trustlines for (receive first, then spend). */
+export function trustlineSymbolsForAction(action: {
+  type?: string;
+  sendAsset?: string | null;
+  destAsset?: string | null;
+}): string[] {
+  const type = action.type ?? "";
+  const symbols: string[] = [];
+  // Receiving / buying these assets
+  if (action.destAsset) symbols.push(action.destAsset);
+  // Spending classic SAC tokens also requires the trustline to exist
+  if (
+    action.sendAsset &&
+    (type.includes("swap") ||
+      type.includes("liquidity") ||
+      type.startsWith("steldex_") ||
+      type.startsWith("soroswap_") ||
+      type.startsWith("blend_") ||
+      type === "send")
+  ) {
+    symbols.push(action.sendAsset);
+  }
+  // Unique, preserve order (dest first so we enable receive before spend)
+  const seen = new Set<string>();
+  return symbols.filter((s) => {
+    const k = s.toUpperCase();
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
+export type TrustlineGate = {
+  assetCode: string;
+  assetIssuer: string;
+  xdr: string;
+  networkPassphrase: string;
+  /** Plain-language label for the original symbol (e.g. cUSDC → "cUSDC (USDC)") */
+  label: string;
+};
+
+/**
+ * If the wallet is missing a classic trustline needed for this action, build changeTrust XDR.
+ * Returns null when nothing is needed (or wallet unknown / custom tokens only).
+ */
+export async function findMissingTrustline(
+  publicKey: string | null | undefined,
+  action: {
+    type?: string;
+    sendAsset?: string | null;
+    destAsset?: string | null;
+  }
+): Promise<TrustlineGate | null> {
+  if (!publicKey || !publicKey.startsWith("G")) return null;
+
+  for (const symbol of trustlineSymbolsForAction(action)) {
+    const classic = resolveClassicTrustline(symbol);
+    if (!classic) continue;
+    const ok = await hasTrustline(publicKey, classic.assetCode, classic.assetIssuer);
+    if (ok) continue;
+    const { xdr, networkPassphrase } = await buildAddTrustlineTransaction(
+      publicKey,
+      classic.assetCode,
+      classic.assetIssuer
+    );
+    const label =
+      symbol.toUpperCase() === classic.assetCode.toUpperCase()
+        ? classic.assetCode
+        : `${symbol} (${classic.assetCode})`;
+    return {
+      assetCode: classic.assetCode,
+      assetIssuer: classic.assetIssuer,
+      xdr,
+      networkPassphrase,
+      label,
+    };
+  }
+  return null;
+}
+
+/** Wrap any pending action behind a one-tap enable-asset (trustline) step. */
+export async function wrapActionWithTrustlineIfNeeded<T extends { type?: string; sendAsset?: string; destAsset?: string }>(
+  publicKey: string | null | undefined,
+  pending: T
+): Promise<{ action: T | (Omit<T, "type"> & { type: "add_trustline"; sendAsset: string; xdr: string; networkPassphrase: string; pendingAction: T }); text?: string }> {
+  if (pending?.type === "add_trustline" || pending?.type === "connect_wallet") {
+    return { action: pending };
+  }
+  const gate = await findMissingTrustline(publicKey, {
+    type: pending.type,
+    sendAsset: pending.sendAsset,
+    destAsset: pending.destAsset,
+  });
+  if (!gate) return { action: pending };
+
+  return {
+    text: `Quick setup: enable ${gate.assetCode} on your wallet (one sign, ~0.5 XLM locked as reserve — no payment). Then your action continues automatically.`,
+    action: {
+      ...pending,
+      type: "add_trustline" as const,
+      sendAsset: gate.assetCode,
+      xdr: gate.xdr,
+      networkPassphrase: gate.networkPassphrase,
+      pendingAction: pending,
+    },
+  };
+}
+
 function _parseBalances(balances: any[]): StellarBalance[] {
   return balances.map((b: any) => {
     if (b.asset_type === "native") {
@@ -113,6 +294,52 @@ export async function getAccountOperations(publicKey: string): Promise<StellarOp
     .limit(25)
     .call();
   return ops.records as any[];
+}
+
+export interface StellarEffect {
+  type: string;
+  created_at: string;
+  amount?: string;
+  asset_type?: string;
+}
+
+/** Horizon effects — used to estimate past native XLM balance. */
+export async function getAccountEffects(
+  publicKey: string,
+  limit = 100
+): Promise<StellarEffect[]> {
+  const result = await horizon
+    .effects()
+    .forAccount(publicKey)
+    .order("desc")
+    .limit(limit)
+    .call();
+  return result.records as StellarEffect[];
+}
+
+/** Net native XLM change from effects strictly after `since` (newest-first list). */
+export function netNativeXlmChangeSince(
+  effects: StellarEffect[],
+  since: Date
+): { net: number; count: number } {
+  let net = 0;
+  let count = 0;
+  const sinceMs = since.getTime();
+  for (const eff of effects) {
+    const t = new Date(eff.created_at).getTime();
+    if (t <= sinceMs) break;
+    if (eff.asset_type && eff.asset_type !== "native") continue;
+    if (!eff.amount) continue;
+    const amount = parseFloat(eff.amount);
+    if (eff.type === "account_credited") {
+      net += amount;
+      count++;
+    } else if (eff.type === "account_debited") {
+      net -= amount;
+      count++;
+    }
+  }
+  return { net, count };
 }
 
 export async function getXlmPriceUsd(): Promise<number> {
