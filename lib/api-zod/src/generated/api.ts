@@ -428,6 +428,7 @@ export const GetSteldexOrdersResponse = zod.array(GetSteldexOrdersResponseItem)
  * @summary On-chain swap quote from StelDex
  */
 export const GetSteldexSwapQuoteBody = zod.object({
+  "walletAddress": zod.string().nullish(),
   "fromTokenContract": zod.string(),
   "toTokenContract": zod.string(),
   "amountIn": zod.string(),
@@ -435,6 +436,9 @@ export const GetSteldexSwapQuoteBody = zod.object({
 })
 
 export const GetSteldexSwapQuoteResponse = zod.object({
+  "outputAmount": zod.number().nullish(),
+  "amountOutRaw": zod.string().nullish(),
+  "minAmountOutRaw": zod.string().nullish(),
   "amountOut": zod.string().nullish(),
   "minAmountOut": zod.string().nullish(),
   "priceImpact": zod.number().nullish()
