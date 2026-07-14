@@ -55,6 +55,21 @@ export async function ensureProductSchema(): Promise<void> {
           created_at timestamptz NOT NULL DEFAULT now()
         )
       `);
+      await db.execute(sql`
+        CREATE TABLE IF NOT EXISTS beta_nft_eligibility (
+          wallet_public_key text PRIMARY KEY,
+          feedback_id integer,
+          whitelisted_at timestamptz NOT NULL DEFAULT now(),
+          claimed_at timestamptz,
+          claim_token_id integer,
+          claim_tx_hash text
+        )
+      `);
+      await db.execute(sql`
+        CREATE INDEX IF NOT EXISTS beta_nft_eligibility_claimed_idx
+        ON beta_nft_eligibility (claimed_at)
+        WHERE claimed_at IS NOT NULL
+      `);
     })();
   }
   await schemaReady;
@@ -189,13 +204,181 @@ export async function insertFeedback(input: {
   walletPublicKey?: string | null;
   rating: number;
   message: string;
-}): Promise<void> {
+}): Promise<{
+  feedbackId: number;
+  betaNft: { eligible: boolean; claimed: boolean; whitelisted: boolean };
+}> {
   await ensureProductSchema();
-  await db.insert(feedbackTable).values({
-    walletPublicKey: input.walletPublicKey ?? null,
-    rating: input.rating,
-    message: input.message,
+  const inserted = await db
+    .insert(feedbackTable)
+    .values({
+      walletPublicKey: input.walletPublicKey ?? null,
+      rating: input.rating,
+      message: input.message,
+    })
+    .returning({ id: feedbackTable.id });
+
+  const feedbackId = inserted[0]?.id ?? 0;
+  const wallet = input.walletPublicKey?.trim() ?? null;
+
+  if (!wallet || !/^G[A-Z2-7]{55}$/.test(wallet)) {
+    return {
+      feedbackId,
+      betaNft: { eligible: false, claimed: false, whitelisted: false },
+    };
+  }
+
+  await db.execute(sql`
+    INSERT INTO beta_nft_eligibility (wallet_public_key, feedback_id)
+    VALUES (${wallet}, ${feedbackId})
+    ON CONFLICT (wallet_public_key) DO NOTHING
+  `);
+
+  const status = await getBetaNftStatus(wallet);
+  return {
+    feedbackId,
+    betaNft: {
+      eligible: status.eligible && !status.claimed,
+      claimed: status.claimed,
+      whitelisted: status.eligible,
+    },
+  };
+}
+
+export async function getBetaNftClaimedCount(): Promise<number> {
+  await ensureProductSchema();
+  const res = await db.execute(sql`
+    SELECT COUNT(*)::int AS n
+    FROM beta_nft_eligibility
+    WHERE claimed_at IS NOT NULL
+  `);
+  const row = res.rows?.[0] as Record<string, unknown> | undefined;
+  const v = row?.n;
+  return typeof v === "number" ? v : Number(v) || 0;
+}
+
+export async function getBetaNftStatus(walletPublicKey: string): Promise<{
+  eligible: boolean;
+  claimed: boolean;
+  claimTxHash: string | null;
+  whitelistedAt: string | null;
+}> {
+  await ensureProductSchema();
+  const res = await db.execute(sql`
+    SELECT claimed_at AS "claimedAt",
+           claim_tx_hash AS "claimTxHash",
+           whitelisted_at AS "whitelistedAt"
+    FROM beta_nft_eligibility
+    WHERE wallet_public_key = ${walletPublicKey}
+    LIMIT 1
+  `);
+  const row = res.rows?.[0] as
+    | {
+        claimedAt?: Date | string | null;
+        claimTxHash?: string | null;
+        whitelistedAt?: Date | string | null;
+      }
+    | undefined;
+  if (!row) {
+    return {
+      eligible: false,
+      claimed: false,
+      claimTxHash: null,
+      whitelistedAt: null,
+    };
+  }
+  return {
+    eligible: true,
+    claimed: Boolean(row.claimedAt ?? (row as { claimedat?: unknown }).claimedat),
+    claimTxHash:
+      row.claimTxHash ??
+      (row as { claimtxhash?: string | null }).claimtxhash ??
+      null,
+    whitelistedAt:
+      row.whitelistedAt instanceof Date
+        ? row.whitelistedAt.toISOString()
+        : row.whitelistedAt
+          ? String(row.whitelistedAt)
+          : (row as { whitelistedat?: string | null }).whitelistedat
+            ? String((row as { whitelistedat?: string | null }).whitelistedat)
+            : null,
+  };
+}
+
+/** DB + on-chain claim state; syncs eligibility row when mint is on-chain only. */
+export async function resolveBetaNftStatus(walletPublicKey: string): Promise<{
+  eligible: boolean;
+  claimed: boolean;
+  claimTxHash: string | null;
+  whitelistedAt: string | null;
+}> {
+  const status = await getBetaNftStatus(walletPublicKey);
+  if (status.claimed) return status;
+
+  const { walletOwnsBetaNft } = await import("./nft");
+  const onChain = await walletOwnsBetaNft(walletPublicKey);
+  if (!onChain.owned) return status;
+
+  await markBetaNftClaimed({
+    walletPublicKey,
+    txHash: status.claimTxHash ?? "onchain-sync",
+    tokenId: onChain.tokenId,
   });
+  return getBetaNftStatus(walletPublicKey);
+}
+
+/** One-line status for LLM system prompt — stops “claim claim” after mint. */
+export async function formatBetaNftStatusForLlm(
+  walletPublicKey: string
+): Promise<string | null> {
+  try {
+    const status = await resolveBetaNftStatus(walletPublicKey);
+    if (status.claimed) {
+      return `Beta tester NFT: ALREADY CLAIMED for this wallet (one per address). Do NOT propose claim/mint of the beta NFT. Suggest “view my NFTs” instead.`;
+    }
+    if (status.eligible) {
+      return `Beta tester NFT: eligible, not claimed yet. User may claim once via “claim my beta NFT”. Never offer a second claim.`;
+    }
+    return `Beta tester NFT: not eligible yet — user must submit feedback (heart icon) first. Do not propose minting the beta tester NFT.`;
+  } catch {
+    return null;
+  }
+}
+
+/** Mark beta NFT claimed after successful on-chain mint. Idempotent. */
+export async function markBetaNftClaimed(input: {
+  walletPublicKey: string;
+  txHash: string;
+  tokenId?: number | null;
+}): Promise<{ ok: boolean; alreadyClaimed: boolean }> {
+  await ensureProductSchema();
+  const status = await getBetaNftStatus(input.walletPublicKey);
+  if (!status.eligible) {
+    return { ok: false, alreadyClaimed: false };
+  }
+  if (status.claimed) {
+    return { ok: true, alreadyClaimed: true };
+  }
+
+  await db.execute(sql`
+    UPDATE beta_nft_eligibility
+    SET claimed_at = now(),
+        claim_tx_hash = ${input.txHash},
+        claim_token_id = ${input.tokenId ?? null}
+    WHERE wallet_public_key = ${input.walletPublicKey}
+      AND claimed_at IS NULL
+  `);
+  await recordWalletEvent({
+    walletPublicKey: input.walletPublicKey,
+    eventType: "tx_submit",
+    metadata: {
+      actionType: "nft_mint",
+      betaNft: true,
+      txHash: input.txHash,
+      tokenId: input.tokenId ?? null,
+    },
+  });
+  return { ok: true, alreadyClaimed: false };
 }
 
 function rowNum(row: Record<string, unknown> | undefined, key: string): number {
@@ -270,6 +453,14 @@ export async function getProductStats() {
     if (type) byType[type] = rowNum(r, "n");
   }
 
+  const betaAgg = await db.execute(sql`
+    SELECT
+      COUNT(*)::int AS whitelisted,
+      COUNT(*) FILTER (WHERE claimed_at IS NOT NULL)::int AS claimed
+    FROM beta_nft_eligibility
+  `);
+  const betaRow = betaAgg.rows?.[0] as Record<string, unknown> | undefined;
+
   return {
     network: "testnet" as const,
     events: {
@@ -298,6 +489,10 @@ export async function getProductStats() {
           : null,
         createdAt: f.createdAt.toISOString(),
       })),
+    },
+    betaNft: {
+      whitelisted: rowNum(betaRow, "whitelisted"),
+      claimed: rowNum(betaRow, "claimed"),
     },
     level4: {
       minUsersTarget: 10,

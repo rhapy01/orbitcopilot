@@ -39,7 +39,7 @@ export type CoachResponse = {
 function risksForCommand(command: string, protocol: string): string[] {
   const notes = [
     "Testnet only — no real mainnet funds",
-    `Signs with your connected Freighter wallet only`,
+    `Signs with your connected wallet only`,
     `Settles on ${protocol} — Orbit never holds balances`,
   ];
   const c = command.toLowerCase();
@@ -113,7 +113,7 @@ function goldenPath(
   else step = "deploy";
 
   const steps: CoachResponse["goldenPath"]["steps"] = [
-    { id: "connect", label: "Connect Freighter", done: true },
+    { id: "connect", label: "Connect wallet", done: true },
     {
       id: "fund",
       label: "Fund Testnet XLM",
@@ -132,7 +132,7 @@ function goldenPath(
   ];
 
   const labels: Record<GoldenStep, string> = {
-    connect: "Connect Freighter on Testnet",
+    connect: "Connect Freighter or Orbit wallet",
     fund: "Fund your wallet (Friendbot) — free Testnet XLM",
     deploy: "Put idle capital to work with one recommended move",
     done: "Capital is earning — review or rebalance anytime",
@@ -174,10 +174,20 @@ export async function buildCoach(publicKey: string): Promise<CoachResponse> {
 
   let headline: string;
   let opportunity: string;
+  const borrowingCount = intel.summary.borrowing;
+
   if (noFunds) {
     headline = "Your wallet isn’t funded yet";
     opportunity =
       "One tap funds Testnet XLM via Friendbot — then Orbit can put idle capital to work.";
+  } else if (borrowingCount > 0) {
+    headline =
+      idleCount > 0
+        ? "You have borrows — watch liquidation risk"
+        : "Open Blend debt — check health";
+    opportunity =
+      `${borrowingCount} borrowing position(s). Ask “blend health” for an educational health-factor estimate, or repay on Blend to reduce risk.` +
+      (idleSummary ? ` Still idle: ${idleSummary}.` : "");
   } else if (earningCount === 0 && idleCount > 0) {
     headline = "You have idle capital";
     opportunity = idleSummary
@@ -194,6 +204,34 @@ export async function buildCoach(publicKey: string): Promise<CoachResponse> {
   } else {
     headline = "No positions detected";
     opportunity = "Fund the wallet or ask “What’s in my portfolio?”";
+  }
+
+  // Prefer repay guidance when borrowed and no better idle deploy
+  if (borrowingCount > 0 && !noFunds) {
+    const borrowPos = intel.positions.find((p) => p.status === "borrowing");
+    if (borrowPos?.suggestion) {
+      primaryMove = {
+        title: `${borrowPos.asset} debt → reduce risk`,
+        reason: "Open borrow increases liquidation risk — review health or repay.",
+        command: borrowPos.suggestion.startsWith("repay")
+          ? borrowPos.suggestion
+          : "blend health",
+        from: "Borrowing",
+        to: "Safer health factor",
+        protocol: borrowPos.protocol,
+        riskNotes: risksForCommand("repay on Blend", "Blend"),
+      };
+    } else if (!primaryMove || idleCount === 0) {
+      primaryMove = {
+        title: "Check Blend health",
+        reason: "You have borrow exposure — estimate health before adding risk.",
+        command: "blend health",
+        from: "Borrowing",
+        to: "Risk check",
+        protocol: "Blend",
+        riskNotes: risksForCommand("borrow on Blend", "Blend"),
+      };
+    }
   }
 
   const [lastIntent, lastOutcome] = await Promise.all([
@@ -214,4 +252,35 @@ export async function buildCoach(publicKey: string): Promise<CoachResponse> {
     lastIntent,
     lastOutcome,
   };
+}
+
+/**
+ * Compact coach snapshot for the LLM system prompt.
+ * Failures return null so chat never blocks on portfolio intel.
+ */
+export async function formatCoachBriefForLlm(
+  publicKey: string
+): Promise<string | null> {
+  try {
+    const coach = await buildCoach(publicKey);
+    const lines = [
+      `Coach headline: ${coach.headline}`,
+      `Opportunity: ${coach.opportunity}`,
+      `Idle positions: ${coach.idleCount}; earning: ${coach.earningCount}`,
+      `Golden path step: ${coach.goldenPath.step} — ${coach.goldenPath.label}`,
+    ];
+    if (coach.idleAssets.length) {
+      lines.push(
+        `Idle assets: ${coach.idleAssets.map((a) => `${a.amount} ${a.asset}`).join(", ")}`
+      );
+    }
+    if (coach.primaryMove) {
+      lines.push(
+        `Primary move: ${coach.primaryMove.title} (${coach.primaryMove.protocol}). Reason: ${coach.primaryMove.reason}. Suggested chat command: "${coach.primaryMove.command}"`
+      );
+    }
+    return lines.join("\n");
+  } catch {
+    return null;
+  }
 }

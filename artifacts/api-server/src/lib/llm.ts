@@ -4,6 +4,7 @@ import {
   formatEarningReport,
   formatRebalancePlan,
 } from "./portfolio";
+import { fetchWalletBalances } from "./wallet-data";
 import { formatLiveDefiCatalog } from "./defi-live";
 import {
   formatRecentActivity,
@@ -20,6 +21,27 @@ import { formatProtocolRegistry } from "./protocols";
 import { fundWithFriendbot } from "./friendbot";
 import { timed } from "./metrics";
 import { enrichChatAction } from "./enrich-action";
+import { formatCoachBriefForLlm } from "./coach";
+import {
+  formatKnowledgeForTool,
+  searchKnowledge,
+} from "./knowledge-rag";
+import { tryConceptAnswer, lookupConcept, formatConcept, compareConcepts } from "./concept-graph";
+import {
+  formatIlAnswer,
+  calculateHealthFactor,
+  formatHealthAnswer,
+  formatAprApyAnswer,
+} from "./defi-math";
+import { formatBlendHealthReport } from "./blend-health";
+import { networkSystemBlurb } from "./network-mode";
+
+export type LlmHistoryTurn = { role: "user" | "assistant"; content: string };
+
+export type LlmCopilotOptions = {
+  /** Prior session turns (excluding the current user message). */
+  history?: LlmHistoryTurn[];
+};
 
 export function llmConfigured(): boolean {
   return Boolean(
@@ -56,9 +78,31 @@ const TOOLS = [
   {
     type: "function",
     function: {
+      name: "get_wallet_balances",
+      description:
+        "Wallet token balances on Stellar testnet (classic Horizon + StelDex tokens like pUSDC). USDC and cUSDC are the same Circle asset — always report as USDC. pUSDC is different. Pass asset for one token; omit asset to list all.",
+      parameters: {
+        type: "object",
+        properties: {
+          asset: {
+            type: "string",
+            description: "Single asset code e.g. XLM, USDC, pUSDC, EURC. Prefer USDC over cUSDC. Omit when user asks for all assets/balances.",
+          },
+          hoursAgo: {
+            type: "number",
+            description: "If user asks balance N hours ago (XLM only), pass N.",
+          },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "get_portfolio",
       description:
-        "Full portfolio intelligence: earning vs idle positions, farms, LP, wallet, and rebalance plan",
+        "ONLY when user explicitly asks for full portfolio, all positions, LP, farms, lending, or rebalance context — NOT for a single asset wallet balance",
       parameters: { type: "object", properties: {}, additionalProperties: false },
     },
   },
@@ -197,9 +241,28 @@ const TOOLS = [
   {
     type: "function",
     function: {
+      name: "list_prediction_markets",
+      description:
+        "List Orbit Predict markets (sports / crypto / all). Use before proposing a predict_bet. If multiple markets match the user's teams, list them and ask which timeframe — never invent market IDs.",
+      parameters: {
+        type: "object",
+        properties: {
+          category: {
+            type: "string",
+            enum: ["sports", "crypto", "all"],
+            description: "Filter category; default all",
+          },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "propose_action",
       description:
-        "Propose a structured on-chain action for the user to sign. Prefer exact amounts and asset codes.",
+        "Propose one on-chain action card. Call multiple times in one turn for multi-action prompts (e.g. swap to A, B, C each = one propose_action per destination). For predict_bet, marketHint must be an exact slug from list_prediction_markets. Prefer exact amounts and asset codes. For add_liquidity, sendAmount/sendAsset is Token A and amountB/destAsset is Token B — both required.",
       parameters: {
         type: "object",
         properties: {
@@ -221,17 +284,127 @@ const TOOLS = [
               "blend_withdraw",
               "blend_borrow",
               "blend_repay",
+              "predict_bet",
+              "predict_claim",
+              "perp_open",
+              "perp_close",
+              "nft_mint",
+              "nft_list",
+              "nft_buy",
+              "nft_transfer",
             ],
           },
-          sendAmount: { type: "string" },
-          sendAsset: { type: "string" },
-          destAsset: { type: "string" },
+          sendAmount: { type: "string", description: "Amount of Token A (or the send/swap input amount)" },
+          sendAsset: { type: "string", description: "Asset code for Token A (e.g. XLM, pUSDC, USDC)" },
+          destAsset: { type: "string", description: "Asset code for Token B or swap output (e.g. pUSDC, XLM)" },
           destination: { type: "string" },
-          amountB: { type: "string" },
-          pair: { type: "string" },
+          amountB: { type: "string", description: "Amount of Token B for add_liquidity actions — REQUIRED for steldex_add_liquidity and soroswap_add_liquidity" },
+          pair: { type: "string", description: "Pool pair string e.g. XLM/pUSDC" },
           liquidity: { type: "string" },
+          marketHint: { type: "string", description: "Prediction market slug or perp symbol (btc, eth, xlm)" },
+          outcome: { type: "string", description: "yes or no for prediction bet/claim" },
+          positionId: { type: "string", description: "Perp position id or NFT token id" },
+          leverage: { type: "number", description: "Perp leverage multiplier" },
+          side: { type: "string", description: "long or short for perps" },
         },
         required: ["type"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "search_knowledge",
+      description:
+        "Search Orbit's DeFi / blockchain / CeFi knowledge base. Use for explain/teach questions: what is DeFi, staking vs LP, impermanent loss, bridges, CEX, oracles, Stellar concepts, risk, etc. Always cite the returned Sources in your reply.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "Search query — the concept or question to look up",
+          },
+        },
+        required: ["query"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "explain_concept",
+      description:
+        "Look up a structured concept from Orbit's concept graph (staking, LP, farming, lending, CeFi, bridges, IL, etc.). Prefer for X vs Y and precise definitions. Pass conceptA alone, or conceptA+conceptB to compare.",
+      parameters: {
+        type: "object",
+        properties: {
+          conceptA: { type: "string" },
+          conceptB: { type: "string", description: "Optional second concept for comparison" },
+        },
+        required: ["conceptA"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "calculate_il",
+      description:
+        "Calculate impermanent loss for a 50/50 constant-product AMM given a price ratio (new/old). Example: doubles → priceRatio 2; halves → 0.5; +50% → 1.5.",
+      parameters: {
+        type: "object",
+        properties: {
+          priceRatio: {
+            type: "number",
+            description: "P1/P0 relative price of one asset vs the other",
+          },
+        },
+        required: ["priceRatio"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "calculate_health_factor",
+      description:
+        "Educational health factor / LTV from collateral USD, debt USD, and optional liquidation threshold (default 0.75). For live Blend wallet positions use get_blend_health.",
+      parameters: {
+        type: "object",
+        properties: {
+          collateralUsd: { type: "number" },
+          debtUsd: { type: "number" },
+          threshold: { type: "number", description: "Liquidation threshold 0–1, default 0.75" },
+        },
+        required: ["collateralUsd", "debtUsd"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_blend_health",
+      description:
+        "Estimate educational health factor from the connected wallet's live Blend supply/borrow positions",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "convert_apr_apy",
+      description: "Convert an APR percent to approximate APY with daily compounding",
+      parameters: {
+        type: "object",
+        properties: {
+          aprPercent: { type: "number", description: "APR as percent, e.g. 10 for 10%" },
+        },
+        required: ["aprPercent"],
         additionalProperties: false,
       },
     },
@@ -244,23 +417,37 @@ async function runTool(
   publicKey: string | null
 ): Promise<string> {
   const needsWallet = [
+    "get_wallet_balances",
     "get_portfolio",
     "get_earning_report",
     "get_rebalance_plan",
     "get_activity",
     "fund_wallet",
+    "get_blend_health",
   ].includes(name);
   if (needsWallet && !publicKey) {
-    return "Wallet not connected. Ask the user to connect Freighter on Testnet.";
+    return "Wallet not connected. Ask the user to connect Freighter or their Orbit embedded wallet.";
   }
   if (name === "get_steldex" && args.positions && !publicKey) {
-    return "Wallet not connected. Ask the user to connect Freighter on Testnet.";
+    return "Wallet not connected. Ask the user to connect Freighter or their Orbit embedded wallet.";
   }
   if (name === "get_soroswap" && args.positions && !publicKey) {
-    return "Wallet not connected. Ask the user to connect Freighter on Testnet.";
+    return "Wallet not connected. Ask the user to connect Freighter or their Orbit embedded wallet.";
   }
 
   switch (name) {
+    case "get_wallet_balances": {
+      const asset =
+        typeof args.asset === "string" && args.asset.trim()
+          ? args.asset.trim()
+          : undefined;
+      const hoursAgo =
+        typeof args.hoursAgo === "number" && args.hoursAgo > 0
+          ? args.hoursAgo
+          : undefined;
+      const data = await fetchWalletBalances(publicKey!, { asset, hoursAgo });
+      return JSON.stringify(data);
+    }
     case "get_portfolio":
       return formatUnifiedPortfolio(publicKey!);
     case "get_earning_report":
@@ -299,8 +486,64 @@ async function runTool(
       return args.positions
         ? formatSoroswapPositions(publicKey!)
         : formatSoroswapStatus();
+    case "list_prediction_markets": {
+      const { formatPredictionMarkets } = await import("./predict");
+      const cat =
+        args.category === "sports" || args.category === "crypto" || args.category === "all"
+          ? args.category
+          : "all";
+      return formatPredictionMarkets({ category: cat });
+    }
     case "propose_action":
       return JSON.stringify({ action: args });
+    case "search_knowledge": {
+      const q =
+        typeof args.query === "string" && args.query.trim()
+          ? args.query.trim()
+          : "";
+      if (!q) return "Provide a non-empty query.";
+      const concept = tryConceptAnswer(q);
+      if (concept) return concept;
+      const hits = searchKnowledge(q, { topK: 4, minScore: 1.0 });
+      return formatKnowledgeForTool(hits);
+    }
+    case "explain_concept": {
+      const a = typeof args.conceptA === "string" ? args.conceptA : "";
+      const b = typeof args.conceptB === "string" ? args.conceptB : "";
+      if (!a.trim()) return "Provide conceptA.";
+      const left = lookupConcept(a);
+      if (!left) return `No concept match for "${a}". Try staking, LP, farming, lending, DeFi, CEX, bridge, IL…`;
+      if (b.trim()) {
+        const right = lookupConcept(b);
+        if (!right) return formatConcept(left);
+        return compareConcepts(left, right);
+      }
+      return formatConcept(left);
+    }
+    case "calculate_il": {
+      const ratio = typeof args.priceRatio === "number" ? args.priceRatio : NaN;
+      const ans = formatIlAnswer(ratio);
+      if (!ans) return "priceRatio must be a positive number (e.g. 2 for double, 0.5 for half).";
+      return ans;
+    }
+    case "calculate_health_factor": {
+      const h = calculateHealthFactor({
+        collateralUsd: Number(args.collateralUsd),
+        debtUsd: Number(args.debtUsd),
+        threshold:
+          typeof args.threshold === "number" ? args.threshold : undefined,
+      });
+      if (!h) return "Provide valid collateralUsd and debtUsd (>= 0).";
+      return formatHealthAnswer(h);
+    }
+    case "get_blend_health":
+      return formatBlendHealthReport(publicKey!);
+    case "convert_apr_apy": {
+      const apr =
+        typeof args.aprPercent === "number" ? args.aprPercent : NaN;
+      if (!Number.isFinite(apr)) return "Provide aprPercent as a number.";
+      return formatAprApyAnswer(apr);
+    }
     default:
       return `Unknown tool ${name}`;
   }
@@ -314,34 +557,92 @@ function actionSummary(action: Record<string, unknown>): string {
   const to = action.destination
     ? ` to ${String(action.destination).slice(0, 6)}…`
     : "";
-  return `I've prepared **${type.replace(/_/g, " ")}** ${amount}${asset}${dest}${to}. Review the card below and sign with Freighter (Testnet).`;
+  return `I've prepared **${type.replace(/_/g, " ")}** ${amount}${asset}${dest}${to}. Review the card below and sign with your connected wallet.`;
 }
 
 export async function runLlmCopilot(
   userMessage: string,
-  publicKey: string | null
-): Promise<{ text: string; action: Record<string, unknown> | null } | null> {
+  publicKey: string | null,
+  opts: LlmCopilotOptions = {}
+): Promise<{
+  text: string;
+  action: Record<string, unknown> | null;
+  actions?: Record<string, unknown>[];
+} | null> {
   const cfg = llmConfig();
   if (!cfg) return null;
 
-  const system = [
-    "You are Orbit Copilot on Stellar Testnet only.",
-    "Use tools for portfolio, yield, markets, and protocol status.",
-    "For sends/swaps/lend/borrow/LP, call propose_action with structured fields (amounts as strings).",
-    "Asset codes: XLM, USDC (classic/Soroswap), pUSDC (StelDex), BLND (Blend).",
-    "Orbit also has prediction markets and perpetuals — use get_portfolio for positions.",
-    "For predictions/perps, tell the user the exact chat command (invest … / open a … USDC long …).",
-    "Never invent transaction hashes. Never ask for secret keys.",
-    "Be concise and actionable.",
-    publicKey ? `User wallet: ${publicKey}` : "User has not connected a wallet yet.",
-  ].join(" ");
+  const coachBrief = publicKey
+    ? await formatCoachBriefForLlm(publicKey).catch(() => null)
+    : null;
+  const betaNftBrief = publicKey
+    ? await import("./product-store")
+        .then((m) => m.formatBetaNftStatusForLlm(publicKey))
+        .catch(() => null)
+    : null;
+
+  const systemParts = [
+    "You are Orbit Copilot — a DeFi assistant on Stellar Testnet.",
+    networkSystemBlurb(),
+    "",
+    "CRITICAL DeFi CONCEPTS — never confuse these three:",
+    "1. STAKING (single asset): deposit one token to earn rewards. Example: stake BLND on Blend. No LP token needed.",
+    "2. LIQUIDITY PROVISION: deposit TWO assets into a pool (e.g. 10 XLM + 10 pUSDC) to earn trading fees. You get LP tokens back. Action type: steldex_add_liquidity.",
+    "3. YIELD FARMING: take the LP tokens you received from liquidity provision and stake them in a farm to earn STELLAR rewards. This requires holding LP tokens first. Action type: steldex_stake.",
+    "These are SEPARATE steps. A user cannot farm without first providing liquidity. If they ask to farm but have no LP, tell them to add liquidity first.",
+    "",
+    "RESPONSE RULES:",
+    "Be concise. Answer what was asked, but proactively flag relevant context (idle capital, market moves on swaps).",
+    "Use prior conversation turns for pronouns and follow-ups (e.g. \"that one\", \"do it\", \"the same asset\").",
+    "Single asset balance → get_wallet_balances with that asset → one line reply.",
+    "All balances → get_wallet_balances with NO asset → short bullet list.",
+    "Full portfolio / LP / farms / lending / what's earning / rebalance → get_portfolio, get_earning_report, or get_rebalance_plan.",
+    "Never call get_portfolio for a single-asset balance question.",
+    "For on-chain actions (swap/LP/farm/lend/borrow/send/predict/perp/nft) → call propose_action with exact amounts and asset codes.",
+    "Explain / teach questions (what is DeFi, IL, CeFi vs DeFi, bridges, oracles, staking vs LP, Stellar concepts) → call search_knowledge or explain_concept first, then answer from the hits and cite Sources.",
+    "Impermanent loss numbers → calculate_il. Health/LTV numbers → calculate_health_factor. Live Blend risk → get_blend_health. APR to APY → convert_apr_apy.",
+    "Prediction: predict_bet / predict_claim with marketHint = exact slug. Call list_prediction_markets first for sports; if ambiguous (two Chelsea–Arsenal fixtures), ask which timeframe — never invent slugs. NFTs: nft_mint / nft_list / nft_buy / nft_transfer.",
+    "Multi-action: for \"swap 200 XLM to pUSDC, cUSDC, EURC each\", call propose_action three times (200 XLM each destination).",
+    "Beta tester NFT is ONE per wallet. Obey BETA NFT STATUS below — never keep saying claim/mint if already claimed.",
+    "Perps: open/close only — SL/TP in the UI are not enforced on-chain yet. Prefer prediction markets for demos.",
+    "Asset codes: XLM, USDC (= StelDex cUSDC, same Circle token), pUSDC (StelDex only, different), EURC, BLND (Blend).",
+    "If user mentions idle funds or asks what to do → give a concrete recommendation based on current yields (and coach context below when present).",
+    "Never invent transaction hashes. Never ask for private keys. Never invent protocol APYs — use tools.",
+    publicKey
+      ? `User wallet: ${publicKey}`
+      : "User has not connected a wallet yet — remind them to connect Freighter or Orbit embedded wallet if they ask about balances or transactions.",
+  ];
+
+  if (betaNftBrief) {
+    systemParts.push("", "BETA NFT STATUS (live):", betaNftBrief);
+  }
+
+  if (coachBrief) {
+    systemParts.push(
+      "",
+      "PORTFOLIO COACH (live — prefer this when advising what to do next):",
+      coachBrief
+    );
+  }
+
+  const system = systemParts.join("\n");
+
+  const history = (opts.history ?? [])
+    .filter((t) => t.content?.trim())
+    .slice(-8)
+    .map((t) => ({
+      role: t.role,
+      content: t.content,
+    }));
 
   const messages: any[] = [
     { role: "system", content: system },
+    ...history,
     { role: "user", content: userMessage },
   ];
 
   let action: Record<string, unknown> | null = null;
+  const actions: Record<string, unknown>[] = [];
   const toolNotes: string[] = [];
 
   const headers: Record<string, string> = {
@@ -382,8 +683,22 @@ export async function runLlmCopilot(
       const toolCalls = choice.tool_calls;
       if (!toolCalls?.length) {
         const text = choice.content?.trim();
+        if (actions.length > 1) {
+          const enrichedList = [];
+          for (const a of actions.slice(0, 5)) {
+            const enriched = await enrichChatAction(a, { publicKey });
+            if (enriched) enrichedList.push(enriched);
+          }
+          return {
+            text:
+              text ||
+              `Prepared ${enrichedList.length} actions. Sign each card.`,
+            action: enrichedList[0] ?? null,
+            actions: enrichedList,
+          };
+        }
         if (action) {
-          const enriched = await enrichChatAction(action);
+          const enriched = await enrichChatAction(action, { publicKey });
           return {
             text: text || actionSummary(enriched ?? action),
             action: enriched ?? action,
@@ -408,10 +723,14 @@ export async function runLlmCopilot(
 
         if (name === "propose_action") {
           action = { ...args };
+          if (actions.length < 5) actions.push({ ...args });
           messages.push({
             role: "tool",
             tool_call_id: call.id,
-            content: "Action accepted. Tell the user to review and sign the card in the UI.",
+            content:
+              actions.length > 1
+                ? `Action ${actions.length} accepted. User will sign each card.`
+                : "Action accepted. Tell the user to review and sign the card in the UI.",
           });
           continue;
         }
@@ -425,18 +744,45 @@ export async function runLlmCopilot(
         });
       }
 
-      // If we only proposed an action, one more turn for a short confirmation is enough
-      if (action && toolCalls.every((c: any) => c.function?.name === "propose_action")) {
-        const enriched = await enrichChatAction(action);
+      // If we only proposed action(s), return cards (skip extra LLM round for multi)
+      if (
+        (action || actions.length) &&
+        toolCalls.every((c: any) => c.function?.name === "propose_action")
+      ) {
+        if (actions.length > 1) {
+          const enrichedList = [];
+          for (const a of actions.slice(0, 5)) {
+            const enriched = await enrichChatAction(a, { publicKey });
+            if (enriched) enrichedList.push(enriched);
+          }
+          return {
+            text: `Prepared ${enrichedList.length} actions. Sign each card.`,
+            action: enrichedList[0] ?? null,
+            actions: enrichedList,
+          };
+        }
+        const enriched = await enrichChatAction(action!, { publicKey });
         return {
-          text: actionSummary(enriched ?? action),
+          text: actionSummary(enriched ?? action!),
           action: enriched ?? action,
         };
       }
     }
 
+    if (actions.length > 1) {
+      const enrichedList = [];
+      for (const a of actions.slice(0, 5)) {
+        const enriched = await enrichChatAction(a, { publicKey });
+        if (enriched) enrichedList.push(enriched);
+      }
+      return {
+        text: `Prepared ${enrichedList.length} actions. Sign each card.`,
+        action: enrichedList[0] ?? null,
+        actions: enrichedList,
+      };
+    }
     if (action) {
-      const enriched = await enrichChatAction(action);
+      const enriched = await enrichChatAction(action, { publicKey });
       return {
         text: actionSummary(enriched ?? action),
         action: enriched ?? action,
