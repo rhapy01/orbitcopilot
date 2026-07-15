@@ -169,6 +169,7 @@ export default function ChatPage() {
  const inputRef = useRef<HTMLTextAreaElement>(null);
  const scrollRef = useRef<HTMLDivElement>(null);
  const [pendingUser, setPendingUser] = useState<ChatMessage | null>(null);
+ const [lessonMessages, setLessonMessages] = useState<ChatMessage[]>([]);
  const [input, setInput] = useState("");
 
  const { data: sessions = [] } = useQuery({
@@ -191,6 +192,7 @@ export default function ChatPage() {
  setActiveSessionId(sessionId);
  storeSessionId(publicKey, sessionId);
  setPendingUser(null);
+ setLessonMessages([]);
  },
  [publicKey]
  );
@@ -234,16 +236,17 @@ export default function ChatPage() {
 
  useEffect(() => {
  setPendingUser(null);
+ setLessonMessages([]);
  const stored = readStoredSessionId(publicKey);
  setActiveSessionId(stored);
  }, [publicKey]);
 
  const messages = useMemo(() => {
  const list = pendingUser
- ? [...serverMessages, pendingUser]
- : serverMessages;
+ ? [...serverMessages, pendingUser, ...lessonMessages]
+ : [...serverMessages, ...lessonMessages];
  return dedupeMessages(list);
- }, [serverMessages, pendingUser]);
+ }, [serverMessages, pendingUser, lessonMessages]);
 
  const [isSending, setIsSending] = useState(false);
  const [sendError, setSendError] = useState<string | null>(null);
@@ -433,7 +436,12 @@ export default function ChatPage() {
  [sendMutation, activeSessionId, isConnected, connecting, openConnectModal, isSending]
  );
 
- const onTxOutcome = useCallback(() => {
+ const onTxOutcome = useCallback(
+ (info?: {
+ hash: string | null;
+ summary: string;
+ teach?: { title: string; markdown: string } | null;
+ }) => {
  void queryClient.invalidateQueries({ queryKey: ["wallet-balances", publicKey ?? "anon"] });
  void queryClient.invalidateQueries({ queryKey: ["wallet-assets", publicKey] });
  void queryClient.invalidateQueries({ queryKey: ["wallet-transactions", publicKey] });
@@ -441,8 +449,23 @@ export default function ChatPage() {
  void queryClient.invalidateQueries({ queryKey: ["portfolio-coach", publicKey] });
  void queryClient.invalidateQueries({ queryKey: ["chat-sessions", publicKey ?? "anon"] });
  void queryClient.invalidateQueries({ queryKey: ["beta-nft-status", publicKey] });
- }, [queryClient, publicKey]);
 
+ const lesson = info?.teach;
+ if (lesson?.markdown) {
+ setLessonMessages((prev) => [
+ ...prev,
+ {
+ id: -(Date.now() + prev.length),
+ role: "assistant",
+ content: lesson.markdown,
+ createdAt: new Date().toISOString(),
+ metadata: null,
+ },
+ ]);
+ }
+ },
+ [queryClient, publicKey]
+ );
  const onSidebarAction = useCallback(
  (action: SidebarAction) => {
  if (action.type === "new-chat") {

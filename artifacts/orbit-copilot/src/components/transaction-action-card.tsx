@@ -27,9 +27,8 @@ import {
 import { track } from "@/lib/analytics";
 import { actionConfidence, outcomeSummary } from "@/lib/action-confidence";
 import {
-  blendTeachAfterSuccess,
-  orbitSupplyTeachAfterSuccess,
-  teachProtocolForAction,
+  teachLessonForAction,
+  type TeachLesson,
 } from "@/lib/learn-more";
 
 function isBetaNftMintAction(action: ChatAction): boolean {
@@ -619,7 +618,11 @@ export function TransactionActionCard({
  /** When length > 1, one progressive card advances through each action after success. */
  queue?: ChatAction[];
  beforeIdle?: string | null;
- onOutcome?: (info: { hash: string | null; summary: string }) => void;
+  onOutcome?: (info: {
+    hash: string | null;
+    summary: string;
+    teach?: TeachLesson | null;
+  }) => void;
  /** Called with a follow-up prompt when a chained action should continue */
  onContinue?: (prompt: string) => void;
 }) {
@@ -820,10 +823,17 @@ export function TransactionActionCard({
  }),
  }).catch(() => {});
  }
- onOutcome?.({ hash, summary });
+      onOutcome?.({
+        hash,
+        summary,
+        teach:
+          !steps || stepIndex >= steps.length - 1
+            ? teachLessonForAction(action.type)
+            : null,
+      });
 
- // Multi-action queue: advance to next step (same card) after a brief success beat
- if (steps && stepIndex < steps.length - 1) {
+      // Multi-action queue: advance to next step (same card) after a brief success beat
+      if (steps && stepIndex < steps.length - 1) {
  const nextIdx = stepIndex + 1;
  const next = steps[nextIdx]!;
  setStepHashes((prev) => [...prev, hash]);
@@ -1544,21 +1554,6 @@ export function TransactionActionCard({
  Before: idle {beforeIdle}. Ask “What&apos;s earning?” to see the updated position book.
  </p>
  )}
- {(() => {
- const protocol = teachProtocolForAction(action.type);
- if (!protocol) return null;
- if (steps && !planComplete) return null;
- const teach =
- protocol === "blend"
- ? blendTeachAfterSuccess(action.type)
- : orbitSupplyTeachAfterSuccess(action.type);
- return (
- <div className="mt-1 space-y-1 border-t border-primary/10 pt-2">
- <p className="text-xs font-medium text-foreground">{teach.title}</p>
- <p className="text-xs leading-relaxed text-muted-foreground">{teach.body}</p>
- </div>
- );
- })()}
  {planComplete && steps ? (
  <ul className="space-y-1">
  {steps.map((step, i) => {
