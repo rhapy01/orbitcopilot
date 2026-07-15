@@ -16,13 +16,13 @@ jobs:
     name: Build gate (matches vercel.json)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: pnpm/action-setup@v4
         with:
           version: 9.15.9
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: pnpm
@@ -61,7 +61,7 @@ jobs:
             echo "Skipping Vercel Actions deploy (secrets not set). Primary CD remains Vercel Git integration."
           fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         if: steps.secrets.outputs.ready == 'true'
 
       - name: Install Vercel CLI
