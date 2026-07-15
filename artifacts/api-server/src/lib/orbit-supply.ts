@@ -125,26 +125,20 @@ export async function prepareOrbitSupplyDeposit(input: {
  ],
  });
 
- const daily = dailyYieldXlm(need);
- let contractId: string | undefined;
- try {
- contractId = requireOrbitSupplyContract();
- } catch {
- /* optional in message */
- }
- const { orbitSupplyLearnMoreBlurb } = await import("./learn-more");
- return {
- type: "orbit_supply_deposit" as const,
- sendAmount: input.amount,
- sendAsset: symbol,
- tokenContract: token.contract,
- xdr: built.xdr,
- networkPassphrase: built.networkPassphrase,
- message: [
- `Orbit Supply: deposit ${input.amount} ${symbol}. Earn ~${daily.toFixed(6)} XLM / 24h (10 XLM per 1M). Claim after 24h with "claim my yield".`,
- orbitSupplyLearnMoreBlurb(contractId),
- ].join("\n"),
- };
+  const daily = dailyYieldXlm(need);
+  const { orbitSupplyLearnMoreBlurb } = await import("./learn-more");
+  return {
+    type: "orbit_supply_deposit" as const,
+    sendAmount: input.amount,
+    sendAsset: symbol,
+    tokenContract: token.contract,
+    xdr: built.xdr,
+    networkPassphrase: built.networkPassphrase,
+    message: [
+      `Orbit Supply: deposit ${input.amount} ${symbol}. Earn ~${daily.toFixed(6)} XLM / 24h (10 XLM per 1M). Claim after 24h with "claim my yield".`,
+      orbitSupplyLearnMoreBlurb(contractId),
+    ].join("\n"),
+  };
 }
 
 export async function prepareOrbitSupplyWithdraw(input: {
