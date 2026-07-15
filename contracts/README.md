@@ -1,138 +1,137 @@
-# Orbit on-chain markets (Soroban)
+# Orbit Copilot contracts (Stellar Testnet)
 
-Prediction markets, perpetuals, and NFTs are **fully on-chain**. Stakes, margin, and NFT settlement use Soroban contracts; the user signs contract invocations. There is no off-chain balance sheet.
-
-## Contracts
-
-| Crate | Purpose |
-|---|---|
-| `orbit-predict` | Binary yes/no markets; `place_bet` pulls XLM SAC into the contract; `claim` pays winners |
-| `orbit-perps` | Perps; `open_position` pulls USDC SAC margin; `close_position` returns margin+PnL |
-| `orbit-nft` | Mintable NFTs; `list_for_sale` / `buy` settle in native XLM SAC |
+Deploy with the `orbit-admin` Freighter/CLI key. Set contract IDs in the API `.env` and restart.
 
 ## Prerequisites
 
-- [Rust](https://rustup.rs/) (`rustup default stable`)
-- [Stellar CLI](https://developers.stellar.org/docs/tools/cli/install-cli)
-- Funded testnet identity: `stellar keys generate orbit-admin --network testnet --fund`
-
-## Build
-
 ```bash
-cd contracts/orbit-predict
-stellar contract build
-
-cd ../orbit-perps
-stellar contract build
-
-cd ../orbit-nft
-stellar contract build
+stellar keys add orbit-admin --secret-key # or use existing
+stellar keys fund $(stellar keys address orbit-admin) --network testnet
 ```
 
-WASM outputs under `target/wasm32-unknown-unknown/release/`.
-
-## Deploy (testnet)
-
-Native XLM SAC (testnet): `CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC`  
-USDC SAC (testnet, Aquarius): `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA`
-
-### Predict
+### Orbit Predict
 
 ```bash
+cd contracts/orbit-predict && stellar contract build
 PREDICT_ID=$(stellar contract deploy \
-  --wasm target/wasm32-unknown-unknown/release/orbit_predict.wasm \
-  --source orbit-admin --network testnet)
-
-stellar contract invoke --id $PREDICT_ID --source orbit-admin --network testnet -- \
-  initialize --admin $(stellar keys address orbit-admin) \
-  --token CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC
-
-# Seed markets (IDs 0..3 must match artifacts/api-server/src/lib/predict.ts)
-stellar contract invoke --id $PREDICT_ID --source orbit-admin --network testnet -- \
-  create_market --question "Will Brazil win their next major tournament match?" --slug "brazil-wins"
-stellar contract invoke --id $PREDICT_ID --source orbit-admin --network testnet -- \
-  create_market --question "Will Bitcoin trade above $100,000 USD this month?" --slug "btc-100k"
-stellar contract invoke --id $PREDICT_ID --source orbit-admin --network testnet -- \
-  create_market --question "Will XLM finish the week higher than it started?" --slug "xlm-up-week"
-stellar contract invoke --id $PREDICT_ID --source orbit-admin --network testnet -- \
-  create_market --question "Will ETH outperform BTC over the next 7 days?" --slug "eth-flip"
-
-# Append sports fixtures (IDs 4+) — or use the JS helper:
-#   node artifacts/api-server/scripts/seed-predict-sports.mjs
-stellar contract invoke --id $PREDICT_ID --source orbit-admin --network testnet -- \
-  create_market --question "Will Chelsea beat Arsenal in the Premier League?" --slug "chelsea-arsenal-epl"
-stellar contract invoke --id $PREDICT_ID --source orbit-admin --network testnet -- \
-  create_market --question "Will Chelsea beat Arsenal in the FA Cup?" --slug "chelsea-arsenal-fa-cup"
-stellar contract invoke --id $PREDICT_ID --source orbit-admin --network testnet -- \
-  create_market --question "Will Liverpool beat Manchester City in the Premier League?" --slug "liverpool-city-epl"
+ --wasm target/wasm32v1-none/release/orbit_predict.wasm \
+ --source orbit-admin --network testnet)
+# initialize + create markets as needed
 ```
 
-### Perps
+### Orbit Perps
 
 ```bash
+cd contracts/orbit-perps && stellar contract build
 PERPS_ID=$(stellar contract deploy \
-  --wasm target/wasm32-unknown-unknown/release/orbit_perps.wasm \
-  --source orbit-admin --network testnet)
-
-stellar contract invoke --id $PERPS_ID --source orbit-admin --network testnet -- \
-  initialize --admin $(stellar keys address orbit-admin) \
-  --margin_token CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA
-
-# Prices use 1e7 scale (e.g. $95,000 → 950000000000)
-stellar contract invoke --id $PERPS_ID --source orbit-admin --network testnet -- \
-  set_market --symbol BTC --max_leverage 10 --mark_price_e7 950000000000
-stellar contract invoke --id $PERPS_ID --source orbit-admin --network testnet -- \
-  set_market --symbol ETH --max_leverage 10 --mark_price_e7 35000000000
-stellar contract invoke --id $PERPS_ID --source orbit-admin --network testnet -- \
-  set_market --symbol XLM --max_leverage 5 --mark_price_e7 1200000
+ --wasm target/wasm32v1-none/release/orbit_perps.wasm \
+ --source orbit-admin --network testnet)
 ```
 
-Keep mark prices fresh (oracle/keeper):
+### Orbit NFT
 
 ```bash
-stellar contract invoke --id $PERPS_ID --source orbit-admin --network testnet -- \
-  set_mark_price --symbol BTC --mark_price_e7 <price_e7>
-```
-
-### NFT
-
-```bash
-cd contracts/orbit-nft
-stellar contract build
-
+cd contracts/orbit-nft && stellar contract build
 NFT_ID=$(stellar contract deploy \
-  --wasm target/wasm32-unknown-unknown/release/orbit_nft.wasm \
-  --source orbit-admin --network testnet)
-
-stellar contract invoke --id $NFT_ID --source orbit-admin --network testnet -- \
-  initialize --admin $(stellar keys address orbit-admin) \
-  --payment_token CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC
+ --wasm target/wasm32v1-none/release/orbit_nft.wasm \
+ --source orbit-admin --network testnet)
 ```
 
-Chat flows: `mint an NFT called Stellar Fox`, `list NFT #1 for 5 XLM`, `buy NFT #1`, `transfer NFT #1 to G…`.
+### Orbit Supply (yield) - deployed testnet
 
-## Resolve prediction markets (required before claims)
+**Contract ID (reward XLM treasury):** `CAK6JTURV46VP2HSVFZORYJHBC4CYP4BDVJLQJK4AXSN6X75SIZRB6QV`
 
-Markets stay `Open` until the **admin** calls `resolve_market`. Without this step, `"claim yes on …"` will fail on-chain.
-
-### Stellar CLI
+Fund more rewards (stroops; 1000 XLM = `10000000000`):
 
 ```bash
-# market_id: brazil-wins=0, btc-100k=1, xlm-up-week=2, eth-flip=3
-# outcome: Yes | No
+SUPPLY_ID=CAK6JTURV46VP2HSVFZORYJHBC4CYP4BDVJLQJK4AXSN6X75SIZRB6QV
+
+# Preferred: deposit_reward pulls XLM SAC from admin into the contract
+stellar contract invoke --id $SUPPLY_ID --source orbit-admin --network testnet -- \
+  deposit_reward --from $(stellar keys address orbit-admin) --amount 10000000000
+
+# Or transfer native XLM SAC directly to $SUPPLY_ID (same treasury)
+```
+
+Env:
+
+```env
+ORBIT_SUPPLY_CONTRACT_ID=CAK6JTURV46VP2HSVFZORYJHBC4CYP4BDVJLQJK4AXSN6X75SIZRB6QV
+```
+
+Allowed deposits: Circle USDC, pUSDC, EURC. Rate: 10 XLM / 1M / 24h.
+
+Chat: `supply 100 USDC on orbit-supply` · `claim my yield`
+
+Rebuild / redeploy (if you change the contract):
+
+```bash
+cd contracts/orbit-supply && stellar contract build
+
+SUPPLY_ID=$(stellar contract deploy \
+ --wasm target/wasm32v1-none/release/orbit_supply.wasm \
+ --source orbit-admin --network testnet)
+
+# Reward token = native XLM SAC
+stellar contract invoke --id $SUPPLY_ID --source orbit-admin --network testnet -- \
+ initialize --admin $(stellar keys address orbit-admin) \
+ --reward_token CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC
+
+# Allow Circle USDC (7 decimals)
+stellar contract invoke --id $SUPPLY_ID --source orbit-admin --network testnet -- \
+ allow_token --token CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA --decimals 7
+
+# Allow pUSDC (6 decimals) and EURC (7) - use live StelDex SAC addresses
+# stellar contract invoke --id $SUPPLY_ID --source orbit-admin --network testnet -- \
+# allow_token --token <PUSDC_SAC> --decimals 6
+# stellar contract invoke --id $SUPPLY_ID --source orbit-admin --network testnet -- \
+# allow_token --token <EURC_SAC> --decimals 7
+
+# Fund reward treasury (1000 XLM = 10000000000 stroops)
+stellar contract invoke --id $SUPPLY_ID --source orbit-admin --network testnet -- \
+ deposit_reward --from $(stellar keys address orbit-admin) --amount 10000000000
+```
+
+**Yield math:** `10 XLM * (stake_human / 1_000_000)` per full 24h period, summed across deposits. Example: 100,000 USDC -> 1 XLM/day.
+
+Chat:
+
+- `supply 100 USDC on orbit-supply`
+- `supply 50 pUSDC on orbit-supply`
+- `withdraw 20 EURC from orbit-supply`
+- `claim my yield`
+- `orbit supply` (status)
+
+### Orbit Blend Swap (optional / legacy)
+
+Live Blend pool `CAPBMXIQ...` already accepts Circle USDC as collateral, so this bridge is usually not needed. Keep for older mock-USDC pools only.
+
+```bash
+cd contracts/orbit-blend-swap && stellar contract build
+
+SWAP_ID=$(stellar contract deploy \
+ --wasm target/wasm32v1-none/release/orbit_blend_swap.wasm \
+ --source orbit-admin --network testnet)
+
+stellar contract invoke --id $SWAP_ID --source orbit-admin --network testnet -- \
+ initialize \
+ --admin $(stellar keys address orbit-admin) \
+ --circle_usdc CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA \
+ --blend_usdc CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU
+
+# Fund bridge with Blend USDC (get some from https://testnet.blend.capital faucet first)
+stellar contract invoke --id $SWAP_ID --source orbit-admin --network testnet -- \
+ fund_blend --from $(stellar keys address orbit-admin) --amount 1000000000000
+```
+
+Chat: `swap 100 USDC to Blend USDC` · `convert 100 USDC and supply on Blend`
+
+## Resolve prediction markets
+
+```bash
 stellar contract invoke --id $PREDICT_ID --source orbit-admin --network testnet -- \
-  resolve_market --market_id 0 --outcome Yes
+ resolve_market --market_id 0 --outcome Yes
 ```
-
-### Node script (from repo root)
-
-```bash
-# .env must include ORBIT_PREDICT_CONTRACT_ID and ORBIT_ADMIN_SECRET_KEY (admin S… key)
-node artifacts/api-server/scripts/resolve-predict.mjs brazil-wins yes
-node artifacts/api-server/scripts/resolve-predict.mjs btc-100k no
-```
-
-Then in chat: `claim yes on brazil-wins`.
 
 ## App env
 
@@ -140,12 +139,8 @@ Then in chat: `claim yes on brazil-wins`.
 ORBIT_PREDICT_CONTRACT_ID=C...
 ORBIT_PERPS_CONTRACT_ID=C...
 ORBIT_NFT_CONTRACT_ID=C...
-# Optional — only for resolve-predict.mjs (never commit)
-ORBIT_ADMIN_SECRET_KEY=S...
+ORBIT_SUPPLY_CONTRACT_ID=CAK6JTURV46VP2HSVFZORYJHBC4CYP4BDVJLQJK4AXSN6X75SIZRB6QV
+# ORBIT_BLEND_SWAP_CONTRACT_ID=C...  # optional
 ```
 
-Restart the API server. Chat flows (`invest 2 XLM on Brazil to win`, `open a 200 USDC long on bitcoin at 5x`, `mint an NFT called Orbit One`) build **contract invocations**; the connected wallet signs; tokens move **into the contracts**.
-
-## User token approvals
-
-`place_bet` / `open_position` / NFT `buy` pull tokens via SAC `transfer` from the user. The user must have a trustline/balance for USDC SAC when opening perps — in chat ask **`faucet USDC`** (Soroswap faucet) first. XLM uses the native SAC above.
+Restart the API after setting env. Users sign Freighter/Orbit wallet txs; tokens move into the contracts.

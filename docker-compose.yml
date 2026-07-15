@@ -1,4 +1,4 @@
-# Orbit off-chain data plane — required for local API (chat + cache + rate limits).
+# Orbit off-chain data plane - required for local API (chat + cache + rate limits).
 # On-chain authority stays on Horizon / Soroban; these services never settle funds.
 services:
   postgres:
@@ -9,9 +9,9 @@ services:
       POSTGRES_PASSWORD: orbit
       POSTGRES_DB: orbit
     ports:
-      - "5432:5432"
+ - "5432:5432"
     volumes:
-      - orbit_pg:/var/lib/postgresql/data
+ - orbit_pg:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U orbit -d orbit"]
       interval: 5s
@@ -22,9 +22,9 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     ports:
-      - "6379:6379"
+ - "6379:6379"
     volumes:
-      - orbit_redis:/data
+ - orbit_redis:/data
     command: ["redis-server", "--appendonly", "yes"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]

@@ -21,24 +21,24 @@
 #
 # Example:
 #   minimumReleaseAgeExclude:
-#     - react
-#     - typescript
+# - react
+# - typescript
 #
 # ============================================================================
 minimumReleaseAge: 1440
 
 minimumReleaseAgeExclude:
   # Exclude @replit scoped packages from the minimum release age check.
-  # These are published by Replit and trusted — the supply-chain attack vector
+  # These are published by Replit and trusted - the supply-chain attack vector
   # this setting guards against does not apply to our own packages.
-  - '@replit/*'
-  - stripe-replit-sync
+ - '@replit/*'
+ - stripe-replit-sync
 
 packages:
-  - artifacts/*
-  - lib/*
-  - lib/integrations/*
-  - scripts
+ - artifacts/*
+ - lib/*
+ - lib/integrations/*
+ - scripts
 
 catalog:
   '@replit/vite-plugin-cartographer': ^0.5.21
@@ -69,10 +69,10 @@ catalog:
 autoInstallPeers: false
 
 onlyBuiltDependencies:
-  - '@swc/core'
-  - esbuild
-  - msw
-  - unrs-resolver
+ - '@swc/core'
+ - esbuild
+ - msw
+ - unrs-resolver
 
 overrides:
   # replit uses linux-x64 only, we can exclude all other platforms

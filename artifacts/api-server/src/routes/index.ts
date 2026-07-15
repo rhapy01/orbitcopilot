@@ -17,6 +17,7 @@ import protocolsRouter from "./protocols";
 import predictRouter from "./predict";
 import perpsRouter from "./perps";
 import nftRouter from "./nft";
+import orbitSupplyRouter from "./orbit-supply";
 import productRouter from "./product";
 
 const router: IRouter = Router();
@@ -40,5 +41,6 @@ router.use(protocolsRouter);
 router.use(predictRouter);
 router.use(perpsRouter);
 router.use(nftRouter);
+router.use(orbitSupplyRouter);
 
 export default router;

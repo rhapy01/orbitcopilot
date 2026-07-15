@@ -4,24 +4,24 @@ info:
   version: 0.1.0
   description: Orbit Copilot API
 servers:
-  - url: /api
+ - url: /api
     description: Base API path
 tags:
-  - name: health
+ - name: health
     description: Health operations
-  - name: chat
+ - name: chat
     description: AI Copilot chat
-  - name: wallet
+ - name: wallet
     description: Wallet and assets
-  - name: portfolio
+ - name: portfolio
     description: Portfolio tracking
-  - name: defi
+ - name: defi
     description: DeFi opportunities
-  - name: assets
+ - name: assets
     description: Asset discovery
-  - name: transactions
+ - name: transactions
     description: Transaction history
-  - name: steldex
+ - name: steldex
     description: Unicorn StelDex integration (Stellar Testnet AMM/farm/limit-order router)
 paths:
   /healthz:
@@ -43,12 +43,12 @@ paths:
       tags: [chat]
       summary: Get chat history (wallet-scoped when wallet is provided)
       parameters:
-        - name: wallet
+ - name: wallet
           in: query
           required: false
           schema:
             type: string
-          description: Stellar G… public key — returns only that wallet's messages
+          description: Stellar G… public key - returns only that wallet's messages
       responses:
         "200":
           description: List of chat messages
@@ -82,7 +82,7 @@ paths:
       tags: [chat]
       summary: Delete a chat message
       parameters:
-        - name: id
+ - name: id
           in: path
           required: true
           schema:
@@ -110,10 +110,10 @@ paths:
       tags: [wallet]
       summary: Get wallet info
       parameters:
-        - name: publicKey
+ - name: publicKey
           in: query
           required: false
-          description: Stellar public key — when provided fetches testnet wallet data; omit for demo testnet account
+          description: Stellar public key - when provided fetches testnet wallet data; omit for demo testnet account
           schema:
             type: string
       responses:
@@ -130,7 +130,7 @@ paths:
       tags: [wallet]
       summary: List wallet assets/balances
       parameters:
-        - name: publicKey
+ - name: publicKey
           in: query
           required: false
           description: Stellar public key for testnet lookup
@@ -152,7 +152,7 @@ paths:
       tags: [transactions]
       summary: Get transaction history
       parameters:
-        - name: publicKey
+ - name: publicKey
           in: query
           required: false
           description: Stellar public key for testnet lookup
@@ -214,7 +214,7 @@ paths:
       tags: [portfolio]
       summary: Unified testnet portfolio (Horizon, Soroswap, StelDex, Blend)
       parameters:
-        - name: publicKey
+ - name: publicKey
           in: query
           required: true
           schema:
@@ -232,9 +232,9 @@ paths:
     get:
       operationId: getPortfolioSummary
       tags: [portfolio]
-      summary: Portfolio overview — totals, allocation, performance
+      summary: Portfolio overview - totals, allocation, performance
       parameters:
-        - name: publicKey
+ - name: publicKey
           in: query
           required: false
           schema:
@@ -283,7 +283,7 @@ paths:
       tags: [defi]
       summary: Get a DeFi opportunity detail
       parameters:
-        - name: id
+ - name: id
           in: path
           required: true
           schema:
@@ -317,7 +317,7 @@ paths:
       tags: [assets]
       summary: Get asset detail
       parameters:
-        - name: code
+ - name: code
           in: path
           required: true
           schema:
@@ -334,7 +334,7 @@ paths:
     get:
       operationId: getMarketOverview
       tags: [assets]
-      summary: Market overview — top movers, trending assets
+      summary: Market overview - top movers, trending assets
       responses:
         "200":
           description: Market overview
@@ -377,7 +377,7 @@ paths:
       tags: [steldex]
       summary: Farm pools + user LP/stake for a wallet
       parameters:
-        - name: wallet
+ - name: wallet
           in: query
           required: true
           schema:
@@ -398,7 +398,7 @@ paths:
       tags: [steldex]
       summary: User's staked farm positions
       parameters:
-        - name: wallet
+ - name: wallet
           in: query
           required: true
           schema:
@@ -419,7 +419,7 @@ paths:
       tags: [steldex]
       summary: User's open limit orders
       parameters:
-        - name: wallet
+ - name: wallet
           in: query
           required: true
           schema:

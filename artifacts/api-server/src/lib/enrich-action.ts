@@ -1,17 +1,20 @@
 import {
   BlendRequestType,
+  preflightBlendWalletSpend,
   resolveBlendReserve,
 } from "./blend";
 import {
   resolveSoroswapToken,
   isSoroswapPair,
   soroswapConfigured,
+  matchSoroswapAddLiquidityAmounts,
 } from "./soroswap";
 import {
   resolveSteldexPool,
   resolveSteldexToken,
   normalizeSteldexSymbol,
   STELDEX_FULL_RANGE,
+  matchSteldexAddLiquidityAmounts,
 } from "./steldex";
 import { wrapActionWithTrustlineIfNeeded } from "./stellar";
 
@@ -58,17 +61,55 @@ export async function enrichChatAction(
   const pair = raw.pair != null ? String(raw.pair) : undefined;
 
   if (type.startsWith("blend_")) {
+    if (type === "blend_claim") {
+      const wallet = opts?.publicKey;
+      if (!wallet) return null;
+      try {
+        const { buildBlendClaimTx } = await import("./blend");
+        const built = await buildBlendClaimTx({ walletAddress: wallet });
+        return {
+          type,
+          sendAsset: "BLND",
+          xdr: built.xdr,
+          networkPassphrase: built.networkPassphrase,
+          poolContract: built.poolContract,
+        };
+      } catch {
+        return null;
+      }
+    }
+    if (type === "blend_usdc_swap") {
+      const wallet = opts?.publicKey;
+      if (!wallet || !sendAmount) return null;
+      try {
+        const { prepareCircleToBlendUsdcSwap } = await import("./blend");
+        const built = await prepareCircleToBlendUsdcSwap({
+          walletAddress: wallet,
+          amount: sendAmount,
+        });
+        return {
+          type,
+          sendAmount: built.sendAmount,
+          sendAsset: "USDC",
+          destAsset: "Blend USDC",
+          xdr: built.xdr,
+          networkPassphrase: built.networkPassphrase,
+        };
+      } catch {
+        return null;
+      }
+    }
     if (!sendAmount || !sendAsset) return null;
     const reserve = await resolveBlendReserve(sendAsset);
     if (!reserve) return null;
     const requestType =
       type === "blend_withdraw"
-        ? BlendRequestType.Withdraw
+        ? BlendRequestType.WithdrawCollateral
         : type === "blend_borrow"
           ? BlendRequestType.Borrow
           : type === "blend_repay"
             ? BlendRequestType.Repay
-            : BlendRequestType.Supply;
+            : BlendRequestType.SupplyCollateral;
     return {
       type,
       requestType,
@@ -77,6 +118,61 @@ export async function enrichChatAction(
       poolContract: reserve.poolContract,
       token0Contract: reserve.tokenContract,
     };
+  }
+
+  if (
+    type === "orbit_supply_deposit" ||
+    type === "orbit_supply_withdraw" ||
+    type === "orbit_supply_claim"
+  ) {
+    const wallet = opts?.publicKey;
+    if (!wallet) return null;
+    try {
+      if (type === "orbit_supply_claim") {
+        const { prepareOrbitSupplyClaim } = await import("./orbit-supply");
+        const built = await prepareOrbitSupplyClaim({ walletAddress: wallet });
+        return {
+          type,
+          sendAmount: built.sendAmount,
+          sendAsset: "XLM",
+          xdr: built.xdr,
+          networkPassphrase: built.networkPassphrase,
+        };
+      }
+      if (!sendAmount || !sendAsset) return null;
+      if (type === "orbit_supply_deposit") {
+        const { prepareOrbitSupplyDeposit } = await import("./orbit-supply");
+        const built = await prepareOrbitSupplyDeposit({
+          walletAddress: wallet,
+          amount: sendAmount,
+          asset: sendAsset,
+        });
+        return {
+          type,
+          sendAmount: built.sendAmount,
+          sendAsset: built.sendAsset,
+          token0Contract: built.tokenContract,
+          xdr: built.xdr,
+          networkPassphrase: built.networkPassphrase,
+        };
+      }
+      const { prepareOrbitSupplyWithdraw } = await import("./orbit-supply");
+      const built = await prepareOrbitSupplyWithdraw({
+        walletAddress: wallet,
+        amount: sendAmount,
+        asset: sendAsset,
+      });
+      return {
+        type,
+        sendAmount: built.sendAmount,
+        sendAsset: built.sendAsset,
+        token0Contract: built.tokenContract,
+        xdr: built.xdr,
+        networkPassphrase: built.networkPassphrase,
+      };
+    } catch {
+      return null;
+    }
   }
 
   if (type === "soroswap_swap") {
@@ -98,10 +194,16 @@ export async function enrichChatAction(
   if (type === "soroswap_add_liquidity") {
     if (!sendAmount || !amountB || !sendAsset || !destAsset) return null;
     if (!soroswapConfigured() || !(await isSoroswapPair(sendAsset, destAsset))) return null;
+    const matched = await matchSoroswapAddLiquidityAmounts({
+      symbolA: sendAsset,
+      symbolB: destAsset,
+      amountAMax: sendAmount,
+      amountBMax: amountB,
+    });
     return {
       type,
-      sendAmount,
-      amountB,
+      sendAmount: matched?.amount0 ?? sendAmount,
+      amountB: matched?.amount1 ?? amountB,
       sendAsset,
       destAsset,
       pair: pair ?? `${sendAsset}/${destAsset}`,
@@ -153,12 +255,31 @@ export async function enrichChatAction(
       if (p0 && p1) pool = await resolveSteldexPool(p0, p1);
     }
     if (!pool) return null;
+
+    let outAmount = sendAmount;
+    let outAmountB = amountB;
+    if (type === "steldex_add_liquidity" && sendAmount && amountB) {
+      // Map user amounts onto pool token0/token1 order, then match ratio
+      const user0 = a === pool.symbol0 ? sendAmount : amountB;
+      const user1 = a === pool.symbol0 ? amountB : sendAmount;
+      const matched = await matchSteldexAddLiquidityAmounts({
+        symbol0: pool.symbol0,
+        symbol1: pool.symbol1,
+        token0Contract: pool.token0Contract,
+        token1Contract: pool.token1Contract,
+        amount0Max: user0,
+        amount1Max: user1,
+      });
+      outAmount = matched?.amount0 ?? user0;
+      outAmountB = matched?.amount1 ?? user1;
+    }
+
     return {
       type,
-      sendAmount,
-      amountB,
-      sendAsset: a ?? pool.symbol0,
-      destAsset: b ?? pool.symbol1,
+      sendAmount: outAmount,
+      amountB: outAmountB,
+      sendAsset: pool.symbol0,
+      destAsset: pool.symbol1,
       poolContract: pool.poolContract,
       pair: pool.pair,
       token0Contract: pool.token0Contract,
@@ -325,11 +446,29 @@ export async function enrichChatAction(
 export async function enrichChatActionWithTrustline(
   raw: Record<string, unknown> | null | undefined,
   opts?: { publicKey?: string | null }
-): Promise<{ action: EnrichedAction | null; trustlineText?: string }> {
+): Promise<{ action: EnrichedAction | null; trustlineText?: string; blockText?: string }> {
   const enriched = await enrichChatAction(raw, opts);
   if (!enriched || enriched.type === "add_trustline") {
     return { action: enriched };
   }
+
+  if (
+    opts?.publicKey &&
+    (enriched.type === "blend_supply" || enriched.type === "blend_repay") &&
+    enriched.sendAmount &&
+    enriched.sendAsset
+  ) {
+    const check = await preflightBlendWalletSpend({
+      walletAddress: opts.publicKey,
+      symbol: enriched.sendAsset,
+      amount: enriched.sendAmount,
+      op: enriched.type === "blend_repay" ? "repay" : "supply",
+    });
+    if (!check.ok) {
+      return { action: null, blockText: check.message };
+    }
+  }
+
   const wrapped = await wrapActionWithTrustlineIfNeeded(opts?.publicKey, enriched);
   return {
     action: wrapped.action as EnrichedAction,

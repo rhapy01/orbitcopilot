@@ -1,12 +1,12 @@
 {
-  "name": "Orbit Co-Pilot Beta tester",
-  "description": "Appreciating the users who took time to test Orbit Copilot. Limited beta collection — total supply 7777.",
-  "image": "https://orbitpilot.vercel.app/orbitpilot-tester.mp4",
-  "animation_url": "https://orbitpilot.vercel.app/orbitpilot-tester.mp4",
-  "external_url": "https://orbitpilot.vercel.app",
-  "attributes": [
-    { "trait_type": "Collection", "value": "Orbit Co-Pilot Beta" },
-    { "trait_type": "Max Supply", "value": "7777" },
-    { "trait_type": "Reward", "value": "Feedback tester" }
-  ]
+ "name": "Orbit Co-Pilot Beta tester",
+ "description": "Appreciating the users who took time to test Orbit Copilot. Limited beta collection - total supply 7777.",
+ "image": "https://orbitpilot.vercel.app/orbitpilot-tester.mp4",
+ "animation_url": "https://orbitpilot.vercel.app/orbitpilot-tester.mp4",
+ "external_url": "https://orbitpilot.vercel.app",
+ "attributes": [
+ { "trait_type": "Collection", "value": "Orbit Co-Pilot Beta" },
+ { "trait_type": "Max Supply", "value": "7777" },
+ { "trait_type": "Reward", "value": "Feedback tester" }
+ ]
 }
