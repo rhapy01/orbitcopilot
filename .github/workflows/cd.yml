@@ -1,0 +1,74 @@
+name: CD
+
+# Continuous deployment gate. Production hosting is Vercel (see vercel.json).
+# This workflow verifies the same build Vercel runs, then deploys when secrets exist.
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: cd-main
+  cancel-in-progress: false
+
+jobs:
+  build-gate:
+    name: Build gate (matches vercel.json)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --ignore-scripts
+
+      - name: Production build
+        run: pnpm --filter @workspace/api-server run build && pnpm --filter @workspace/orbit-copilot run build
+
+      - name: Upload static artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: orbit-copilot-dist
+          path: artifacts/orbit-copilot/dist/public
+          if-no-files-found: error
+
+  deploy-vercel:
+    name: Deploy to Vercel
+    needs: build-gate
+    runs-on: ubuntu-latest
+    if: ${{ secrets.VERCEL_TOKEN != '' && secrets.VERCEL_ORG_ID != '' && secrets.VERCEL_PROJECT_ID != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
+
+      - name: Pull Vercel env
+        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Build on Vercel
+        run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Deploy prebuilt
+        run: vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
+
+  deploy-status:
+    name: CD status
+    needs: [build-gate, deploy-vercel]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Summarize
+        run: |
+          echo "Build gate: ${{ needs.build-gate.result }}"
+          echo "Vercel deploy job: ${{ needs.deploy-vercel.result }}"
+          echo "Primary CD path: Vercel Git integration on push to main (vercel.json)."
+          echo "Optional Actions deploy runs when VERCEL_TOKEN / ORG / PROJECT secrets are set."
