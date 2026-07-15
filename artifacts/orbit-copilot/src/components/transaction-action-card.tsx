@@ -1553,22 +1553,9 @@ export function TransactionActionCard({
  ? blendTeachAfterSuccess(action.type)
  : orbitSupplyTeachAfterSuccess(action.type);
  return (
- <div className="mt-1 space-y-1.5 border-t border-primary/10 pt-2">
- <p className="text-xs font-medium text-foreground">{teach.headline}</p>
- <ul className="space-y-1">
- {teach.links.map((link) => (
- <li key={link.href + link.label}>
- <a
- href={link.href}
- target="_blank"
- rel="noreferrer"
- className="text-xs text-primary inline-flex items-center gap-1 hover:underline"
- >
- {link.label} <ExternalLink className="w-3 h-3 shrink-0" />
- </a>
- </li>
- ))}
- </ul>
+ <div className="mt-1 space-y-1 border-t border-primary/10 pt-2">
+ <p className="text-xs font-medium text-foreground">{teach.title}</p>
+ <p className="text-xs leading-relaxed text-muted-foreground">{teach.body}</p>
  </div>
  );
  })()}
