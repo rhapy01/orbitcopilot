@@ -125,7 +125,6 @@ import {
  prepareOrbitSupplyDeposit,
  prepareOrbitSupplyWithdraw,
 } from "../lib/orbit-supply";
-import { blendLearnMoreBlurb, orbitSupplyLearnMoreBlurb } from "../lib/learn-more";
 import { BETA_NFT_NAME, BETA_NFT_URI, BETA_NFT_MAX_SUPPLY } from "../lib/beta-nft";
 import { getBetaNftClaimedCount, resolveBetaNftStatus } from "../lib/product-store";
 
@@ -1521,18 +1520,16 @@ async function getDeterministicResponse(
  try {
  const { buildBlendClaimTx } = await import("../lib/blend");
  const claim = await buildBlendClaimTx({ walletAddress: publicKey });
- return {
- text:
- "Claim Blend emissions (BLND) for your supply/borrow positions. Sign to receive rewards." +
- blendLearnMoreBlurb(),
- action: {
- type: "blend_claim",
- sendAsset: "BLND",
- xdr: claim.xdr,
- networkPassphrase: claim.networkPassphrase,
- poolContract: claim.poolContract,
- },
- };
+      return {
+        text: "Claim Blend emissions (BLND) for your supply/borrow positions. Sign to receive rewards.",
+        action: {
+          type: "blend_claim",
+          sendAsset: "BLND",
+          xdr: claim.xdr,
+          networkPassphrase: claim.networkPassphrase,
+          poolContract: claim.poolContract,
+        },
+      };
  } catch (err: any) {
  return { text: err?.message ?? "Could not prepare Blend claim", action: null };
  }
@@ -1597,14 +1594,13 @@ async function getDeterministicResponse(
  poolContract: reserve.poolContract,
  token0Contract: reserve.tokenContract,
  };
- const gated = await wrapActionWithTrustlineIfNeeded(publicKey, action);
- return {
- text:
- (gated.text ??
- `Blend ${type.replace("blend_", "")}: ${amount} ${reserve.symbol} on the live testnet pool.${usdcNote} Review and sign with your connected wallet.`) +
- blendLearnMoreBlurb(),
- action: gated.action as ChatAction,
- };
+      const gated = await wrapActionWithTrustlineIfNeeded(publicKey, action);
+      return {
+        text:
+          gated.text ??
+          `Blend ${type.replace("blend_", "")}: ${amount} ${reserve.symbol} on the live testnet pool.${usdcNote} Review and sign with your connected wallet.`,
+        action: gated.action as ChatAction,
+      };
  }
  }
  }
@@ -1648,13 +1644,8 @@ async function getDeterministicResponse(
           xdr: prepared.xdr,
           networkPassphrase: prepared.networkPassphrase,
         });
-        // Trustline gate replaces the deposit message; keep the teach blurb either way.
-        const teach =
-          gated.text && !String(gated.text).includes("Learn more about Orbit Supply")
-            ? orbitSupplyLearnMoreBlurb(process.env.ORBIT_SUPPLY_CONTRACT_ID?.trim())
-            : "";
         return {
-          text: gated.text ? `${gated.text}${teach}` : prepared.message,
+          text: gated.text ?? prepared.message,
           action: gated.action as ChatAction,
         };
  } catch (err: any) {

@@ -26,6 +26,11 @@ import {
 } from "@/lib/steldex-submit";
 import { track } from "@/lib/analytics";
 import { actionConfidence, outcomeSummary } from "@/lib/action-confidence";
+import {
+  blendTeachAfterSuccess,
+  orbitSupplyTeachAfterSuccess,
+  teachProtocolForAction,
+} from "@/lib/learn-more";
 
 function isBetaNftMintAction(action: ChatAction): boolean {
  if (action.type !== "nft_mint") return false;
@@ -1539,6 +1544,34 @@ export function TransactionActionCard({
  Before: idle {beforeIdle}. Ask “What&apos;s earning?” to see the updated position book.
  </p>
  )}
+ {(() => {
+ const protocol = teachProtocolForAction(action.type);
+ if (!protocol) return null;
+ if (steps && !planComplete) return null;
+ const teach =
+ protocol === "blend"
+ ? blendTeachAfterSuccess(action.type)
+ : orbitSupplyTeachAfterSuccess(action.type);
+ return (
+ <div className="mt-1 space-y-1.5 border-t border-primary/10 pt-2">
+ <p className="text-xs font-medium text-foreground">{teach.headline}</p>
+ <ul className="space-y-1">
+ {teach.links.map((link) => (
+ <li key={link.href + link.label}>
+ <a
+ href={link.href}
+ target="_blank"
+ rel="noreferrer"
+ className="text-xs text-primary inline-flex items-center gap-1 hover:underline"
+ >
+ {link.label} <ExternalLink className="w-3 h-3 shrink-0" />
+ </a>
+ </li>
+ ))}
+ </ul>
+ </div>
+ );
+ })()}
  {planComplete && steps ? (
  <ul className="space-y-1">
  {steps.map((step, i) => {

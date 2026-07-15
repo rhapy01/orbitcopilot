@@ -126,7 +126,6 @@ export async function prepareOrbitSupplyDeposit(input: {
  });
 
   const daily = dailyYieldXlm(need);
-  const { orbitSupplyLearnMoreBlurb } = await import("./learn-more");
   return {
     type: "orbit_supply_deposit" as const,
     sendAmount: input.amount,
@@ -134,10 +133,7 @@ export async function prepareOrbitSupplyDeposit(input: {
     tokenContract: token.contract,
     xdr: built.xdr,
     networkPassphrase: built.networkPassphrase,
-    message: [
-      `Orbit Supply: deposit ${input.amount} ${symbol}. Earn ~${daily.toFixed(6)} XLM / 24h (10 XLM per 1M). Claim after 24h with "claim my yield".`,
-      orbitSupplyLearnMoreBlurb(contractId),
-    ].join("\n"),
+    message: `Orbit Supply: deposit ${input.amount} ${symbol}. Earn ~${daily.toFixed(6)} XLM / 24h (10 XLM per 1M). Claim after 24h with "claim my yield". Sign to confirm.`,
   };
 }
 
@@ -198,17 +194,13 @@ export async function prepareOrbitSupplyClaim(input: { walletAddress: string }) 
  args: [Address.fromString(input.walletAddress).toScVal()],
  });
 
-  const { orbitSupplyLearnMoreBlurb } = await import("./learn-more");
   return {
     type: "orbit_supply_claim" as const,
     sendAmount: status.pendingXlm.toFixed(7),
     sendAsset: "XLM",
     xdr: built.xdr,
     networkPassphrase: built.networkPassphrase,
-    message: [
-      `Claim ~${status.pendingXlm.toFixed(6)} XLM Orbit Supply yield. Sign to receive rewards.`,
-      orbitSupplyLearnMoreBlurb(contractId),
-    ].join("\n"),
+    message: `Claim ~${status.pendingXlm.toFixed(6)} XLM Orbit Supply yield. Sign to receive rewards.`,
   };
 }
 
