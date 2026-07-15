@@ -107,7 +107,8 @@ These paths address smart-contract integration and pipeline review:
 **Reviewer links**
 
 - Actions hub: https://github.com/rhapy01/orbitcopilot/actions  
-- Latest green **CD** (`6237fed`): https://github.com/rhapy01/orbitcopilot/actions/runs/29406776348  
+- Latest green **CI** (`9a6b061`): https://github.com/rhapy01/orbitcopilot/actions/runs/29407093355  
+- Latest green **CD** (`9a6b061`): https://github.com/rhapy01/orbitcopilot/actions/runs/29407093149  
 - **CI** workflow: https://github.com/rhapy01/orbitcopilot/actions/workflows/ci.yml  
 - **CD** workflow: https://github.com/rhapy01/orbitcopilot/actions/workflows/cd.yml  
 
