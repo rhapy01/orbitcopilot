@@ -72,6 +72,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --ignore-scripts
 
+      - name: Typecheck workspace libs
+        run: pnpm run typecheck:libs
+
       - name: Typecheck frontend
         run: pnpm --filter @workspace/orbit-copilot run typecheck
 

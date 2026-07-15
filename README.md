@@ -10,6 +10,7 @@ One conversation for balances, swaps, LP, stake/farm, lend/borrow, prediction ma
 | **Analytics** | [https://orbitpilot.vercel.app/stats](https://orbitpilot.vercel.app/stats) |
 | **Health** | [https://orbitpilot.vercel.app/api/healthz](https://orbitpilot.vercel.app/api/healthz) |
 | **Repo** | [https://github.com/rhapy01/orbitcopilot](https://github.com/rhapy01/orbitcopilot) |
+| **CI / CD** | [![CI](https://github.com/rhapy01/orbitcopilot/actions/workflows/ci.yml/badge.svg)](https://github.com/rhapy01/orbitcopilot/actions/workflows/ci.yml) [![CD](https://github.com/rhapy01/orbitcopilot/actions/workflows/cd.yml/badge.svg)](https://github.com/rhapy01/orbitcopilot/actions/workflows/cd.yml) · [All runs](https://github.com/rhapy01/orbitcopilot/actions) |
 | **Network** | Stellar **Testnet** only (Mainnet Freighter is rejected) |
 
 ---
@@ -100,8 +101,15 @@ These paths address smart-contract integration and pipeline review:
 | **API tx builder** | [`artifacts/api-server/src/lib/onchain.ts`](artifacts/api-server/src/lib/onchain.ts) (`buildContractInvoke`) |
 | **Root discovery pointers** | [`soroban.js`](soroban.js), [`contract.js`](contract.js) |
 | **Contract ↔ frontend cross-check** | [`contracts/INTEGRATION.md`](contracts/INTEGRATION.md) |
-| **CI** (cargo fmt/clippy/build/test + pnpm install/build) | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) |
-| **CD** (production build gate + optional Vercel deploy) | [`.github/workflows/cd.yml`](.github/workflows/cd.yml), [`vercel.json`](vercel.json) |
+| **CI** (cargo fmt/clippy/build/test + pnpm install/build) | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) · [workflow runs](https://github.com/rhapy01/orbitcopilot/actions/workflows/ci.yml) |
+| **CD** (production build gate + optional Vercel deploy) | [`.github/workflows/cd.yml`](.github/workflows/cd.yml), [`vercel.json`](vercel.json) · [workflow runs](https://github.com/rhapy01/orbitcopilot/actions/workflows/cd.yml) |
+
+**Reviewer links**
+
+- Actions hub: https://github.com/rhapy01/orbitcopilot/actions  
+- Latest green **CD** (`6237fed`): https://github.com/rhapy01/orbitcopilot/actions/runs/29406776348  
+- **CI** workflow: https://github.com/rhapy01/orbitcopilot/actions/workflows/ci.yml  
+- **CD** workflow: https://github.com/rhapy01/orbitcopilot/actions/workflows/cd.yml  
 
 Wallet signing surface: `artifacts/orbit-copilot/src/components/transaction-action-card.tsx` + `use-freighter.tsx` / `use-wallet.tsx`.
 
