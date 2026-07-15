@@ -30,6 +30,8 @@ import {
   teachLessonForAction,
   type TeachLesson,
 } from "@/lib/learn-more";
+import { resolveActionContract } from "@/lib/contract";
+import { STELLAR_NETWORK_PASSPHRASE } from "@/lib/soroban";
 
 function isBetaNftMintAction(action: ChatAction): boolean {
  if (action.type !== "nft_mint") return false;
@@ -395,6 +397,8 @@ function isOrbitNativeAction(type: ChatAction["type"]) {
 }
 
 function actionTitle(action: ChatAction): string {
+ // Keeps UI titles aligned with Rust methods via contract.ts registry.
+ resolveActionContract(action.type);
  switch (action.type) {
  case "send":
  return "Send Payment";
@@ -908,6 +912,7 @@ export function TransactionActionCard({
  const trustPassphrase =
  (trustData.networkPassphrase as string | undefined) ||
  action.networkPassphrase ||
+ STELLAR_NETWORK_PASSPHRASE ||
  STELDEX_NETWORK_PASSPHRASE;
  setAction((prev) => ({
  ...prev,
@@ -967,6 +972,7 @@ export function TransactionActionCard({
  rebuilt.xdr,
  rebuilt.networkPassphrase ||
  action.networkPassphrase ||
+ STELLAR_NETWORK_PASSPHRASE ||
  STELDEX_NETWORK_PASSPHRASE
  );
  setStatus("submitting");
@@ -1225,7 +1231,7 @@ export function TransactionActionCard({
  <Button
  size="sm"
  className="w-full rounded-xl bg-orbit-gradient text-white border-0 hover:opacity-90"
- onClick={handleExecute}
+ onClick={() => void handleExecute()}
  disabled={isBusy || !isConnected}
  >
  {isBusy ? (

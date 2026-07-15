@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, createContext, useContext } from "react";
+import { STELLAR_NETWORK_PASSPHRASE } from "@/lib/soroban";
 import { track } from "@/lib/analytics";
 
 interface FreighterState {
@@ -53,7 +54,9 @@ export function FreighterProvider({ children }: { children: React.ReactNode }) {
  if (!addrResult.error && addrResult.address) {
  const netResult = await freighter.getNetworkDetails();
  setPublicKey(addrResult.address);
- const isTestnet = Boolean(netResult.networkPassphrase?.includes("Test"));
+      const isTestnet =
+        Boolean(netResult.networkPassphrase?.includes("Test")) ||
+        netResult.networkPassphrase === STELLAR_NETWORK_PASSPHRASE;
  setNetwork(isTestnet ? "Testnet" : netResult.network ?? "Unknown");
  setNetworkPassphrase(netResult.networkPassphrase ?? null);
  setIsConnected(true);
@@ -81,7 +84,9 @@ export function FreighterProvider({ children }: { children: React.ReactNode }) {
  if (addrResult.error) throw new Error(addrResult.error.message);
 
  const netResult = await freighter.getNetworkDetails();
- const isTestnet = Boolean(netResult.networkPassphrase?.includes("Test"));
+      const isTestnet =
+        Boolean(netResult.networkPassphrase?.includes("Test")) ||
+        netResult.networkPassphrase === STELLAR_NETWORK_PASSPHRASE;
  setPublicKey(addrResult.address);
  setNetwork(isTestnet ? "Testnet" : netResult.network ?? "Unknown");
  setNetworkPassphrase(netResult.networkPassphrase ?? null);
