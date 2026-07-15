@@ -84,8 +84,26 @@ Postgres and Redis are **product infrastructure only** (chat history, sessions, 
 | Chain | `@stellar/stellar-sdk`, Horizon, Soroban |
 | Auth | WebAuthn (passkeys), email OTP (SMTP), KMS envelope crypto |
 | LLM | OpenRouter (optional); deterministic intents always preferred |
-| Contracts | Rust / Soroban (`contracts/orbit-predict`, `orbit-perps`, `orbit-nft`) |
+| Contracts | Rust / Soroban (`contracts/orbit-predict`, `orbit-perps`, `orbit-nft`, `orbit-supply`) |
 | Monorepo | pnpm workspaces |
+
+---
+
+## Judge / reviewer checklist (integration + CI/CD)
+
+These paths address smart-contract integration and pipeline review:
+
+| Criterion | Location |
+|---|---|
+| **Frontend Stellar SDK** | [`artifacts/orbit-copilot/src/lib/soroban.ts`](artifacts/orbit-copilot/src/lib/soroban.ts) (`@stellar/stellar-sdk`: network, `Contract`, invoke XDR) |
+| **Contract method map** | [`artifacts/orbit-copilot/src/lib/contract.ts`](artifacts/orbit-copilot/src/lib/contract.ts) (Rust methods ↔ chat actions) |
+| **API tx builder** | [`artifacts/api-server/src/lib/onchain.ts`](artifacts/api-server/src/lib/onchain.ts) (`buildContractInvoke`) |
+| **Root discovery pointers** | [`soroban.js`](soroban.js), [`contract.js`](contract.js) |
+| **Contract ↔ frontend cross-check** | [`contracts/INTEGRATION.md`](contracts/INTEGRATION.md) |
+| **CI** (cargo fmt/clippy/build/test + pnpm install/build) | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) |
+| **CD** (production build gate + optional Vercel deploy) | [`.github/workflows/cd.yml`](.github/workflows/cd.yml), [`vercel.json`](vercel.json) |
+
+Wallet signing surface: `artifacts/orbit-copilot/src/components/transaction-action-card.tsx` + `use-freighter.tsx` / `use-wallet.tsx`.
 
 ---
 

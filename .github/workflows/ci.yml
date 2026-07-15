@@ -81,7 +81,12 @@ jobs:
       - name: Build frontend
         run: pnpm --filter @workspace/orbit-copilot run build
 
-      - name: Smoke - stellar-sdk import surface
+      - name: Smoke - stellar-sdk + contract map surface
         run: |
           node -e "const fs=require('fs'); const p='artifacts/orbit-copilot/src/lib/soroban.ts'; const t=fs.readFileSync(p,'utf8'); if(!t.includes('@stellar/stellar-sdk')) process.exit(1); console.log('ok: frontend soroban.ts uses @stellar/stellar-sdk');"
+          node -e "const fs=require('fs'); const p='artifacts/orbit-copilot/src/lib/contract.ts'; const t=fs.readFileSync(p,'utf8'); if(!t.includes('ORBIT_CONTRACT_METHODS')) process.exit(1); console.log('ok: frontend contract.ts maps contract methods');"
           node -e "const fs=require('fs'); const p='artifacts/api-server/src/lib/onchain.ts'; const t=fs.readFileSync(p,'utf8'); if(!t.includes('buildContractInvoke')) process.exit(1); console.log('ok: api onchain.ts builds Soroban invokes');"
+          node -e "const p=require('./soroban.js'); if(!p.frontendSoroban) process.exit(1); console.log('ok: root soroban.js discovery pointer');"
+          node -e "const p=require('./contract.js'); if(!p.frontendContracts) process.exit(1); console.log('ok: root contract.js discovery pointer');"
+          test -f .github/workflows/ci.yml && test -f .github/workflows/cd.yml && echo 'ok: CI/CD workflows present'
+          test -f contracts/INTEGRATION.md && echo 'ok: contracts/INTEGRATION.md cross-check present'

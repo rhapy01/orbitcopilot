@@ -44,20 +44,40 @@ jobs:
     name: Deploy to Vercel
     needs: build-gate
     runs-on: ubuntu-latest
-    if: ${{ secrets.VERCEL_TOKEN != '' && secrets.VERCEL_ORG_ID != '' && secrets.VERCEL_PROJECT_ID != '' }}
+    # Avoid secrets.* in job-level if (can fail workflow parse when unset).
+    # Steps no-op when VERCEL_TOKEN is missing.
     steps:
+      - name: Check deploy secrets
+        id: secrets
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          if [ -n "$VERCEL_TOKEN" ] && [ -n "$VERCEL_ORG_ID" ] && [ -n "$VERCEL_PROJECT_ID" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping Vercel Actions deploy (secrets not set). Primary CD remains Vercel Git integration."
+          fi
+
       - uses: actions/checkout@v4
+        if: steps.secrets.outputs.ready == 'true'
 
       - name: Install Vercel CLI
+        if: steps.secrets.outputs.ready == 'true'
         run: npm install -g vercel@latest
 
       - name: Pull Vercel env
+        if: steps.secrets.outputs.ready == 'true'
         run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
 
       - name: Build on Vercel
+        if: steps.secrets.outputs.ready == 'true'
         run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
 
       - name: Deploy prebuilt
+        if: steps.secrets.outputs.ready == 'true'
         run: vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
 
   deploy-status:

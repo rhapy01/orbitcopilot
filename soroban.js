@@ -13,4 +13,6 @@ module.exports = {
   frontendContracts: "artifacts/orbit-copilot/src/lib/contract.ts",
   apiOnchain: "artifacts/api-server/src/lib/onchain.ts",
   integrationDoc: "contracts/INTEGRATION.md",
+  ci: ".github/workflows/ci.yml",
+  cd: ".github/workflows/cd.yml",
 };

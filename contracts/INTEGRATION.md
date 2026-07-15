@@ -21,8 +21,8 @@ and **TypeScript callers** (API + frontend).
 |---|---|---|---|
 | orbit-predict | `place_bet` | `predict_bet` | `api-server/src/lib/predict.ts` |
 | orbit-predict | `claim` | `predict_claim` | `api-server/src/lib/predict.ts` |
-| orbit-perps | `open_position` | `perps_open` | `api-server/src/lib/perps.ts` |
-| orbit-perps | `close_position` | `perps_close` | `api-server/src/lib/perps.ts` |
+| orbit-perps | `open_position` | `perp_open` | `api-server/src/lib/perps.ts` |
+| orbit-perps | `close_position` | `perp_close` | `api-server/src/lib/perps.ts` |
 | orbit-nft | `mint` | `nft_mint` | `api-server/src/lib/nft.ts` |
 | orbit-nft | `buy` / `list_for_sale` | `nft_buy` / `nft_list` | `api-server/src/lib/nft.ts` |
 | orbit-supply | `supply` | `orbit_supply_deposit` | `api-server/src/lib/orbit-supply.ts` + `orbit-copilot/src/lib/contract.ts` |
