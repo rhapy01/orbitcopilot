@@ -157,7 +157,8 @@ Use this path for demos and Level 4 review:
 6. Open **[/stats](https://orbitpilot.vercel.app/stats)** - unique wallets, events, feedback 
 7. Optional proof APIs:
  - `GET /api/stats` → `events.uniqueWallets`, `level4.usersTargetMet`
- - `GET /api/feedback/summary` → plain-text feedback writeup 
+ - `GET /api/feedback/summary` → plain-text feedback writeup (recent)
+ - `GET /api/feedback/export?format=csv` → full feedback CSV (Blue Belt)
  - `GET /api/healthz` → liveness + data-plane status 
  - `GET /api/metrics` → timings / counters 
 

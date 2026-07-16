@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import {
  getProductStats,
  insertFeedback,
+ listAllFeedback,
  recordWalletEvent,
  resolveBetaNftStatus,
 } from "../lib/product-store";
@@ -166,6 +167,76 @@ router.get("/feedback/summary", async (_req, res): Promise<void> => {
  res.type("text/plain").send(lines.join("\n"));
  } catch (err) {
  res.status(503).type("text/plain").send("Feedback summary unavailable");
+ }
+});
+
+/**
+ * Full feedback export for Blue Belt / judges.
+ * - GET /api/feedback/export → JSON (default)
+ * - GET /api/feedback/export?format=csv → CSV download
+ * - GET /api/feedback/export?format=txt → plain-text writeup of ALL rows
+ */
+router.get("/feedback/export", async (req, res): Promise<void> => {
+ try {
+ const format =
+ typeof req.query.format === "string" ? req.query.format.trim().toLowerCase() : "json";
+ const rows = await listAllFeedback();
+ const avg =
+ rows.length === 0
+ ? 0
+ : Math.round((rows.reduce((s, r) => s + r.rating, 0) / rows.length) * 10) / 10;
+
+ if (format === "csv") {
+ const esc = (v: string) => `"${v.replace(/"/g, '""')}"`;
+ const lines = [
+ "id,rating,wallet_public_key,created_at,message",
+ ...rows.map((r) =>
+ [
+ r.id,
+ r.rating,
+ esc(r.walletPublicKey ?? ""),
+ esc(r.createdAt),
+ esc(r.message),
+ ].join(",")
+ ),
+ ];
+ res.setHeader("Content-Disposition", 'attachment; filename="orbit-feedback.csv"');
+ res.type("text/csv").send(lines.join("\n"));
+ return;
+ }
+
+ if (format === "txt") {
+ const lines = [
+ `Orbit Copilot - full user feedback export (Testnet)`,
+ `Responses: ${rows.length}`,
+ `Average rating: ${avg}/5`,
+ `Exported: ${new Date().toISOString()}`,
+ "",
+ ];
+ for (const f of rows) {
+ const wallet = f.walletPublicKey ?? "(no wallet)";
+ lines.push(`--- #${f.id} | ${f.rating}/5 | ${wallet} | ${f.createdAt}`);
+ lines.push(f.message);
+ lines.push("");
+ }
+ if (rows.length === 0) lines.push("(no feedback yet)");
+ res.setHeader("Content-Disposition", 'attachment; filename="orbit-feedback.txt"');
+ res.type("text/plain").send(lines.join("\n"));
+ return;
+ }
+
+ res.json({
+ network: "testnet",
+ total: rows.length,
+ averageRating: avg,
+ exportedAt: new Date().toISOString(),
+ feedback: rows,
+ });
+ } catch (err) {
+ console.error("[feedback/export] GET failed:", err);
+ res.status(503).json({
+ error: err instanceof Error ? err.message : "Feedback export unavailable",
+ });
  }
 });
 

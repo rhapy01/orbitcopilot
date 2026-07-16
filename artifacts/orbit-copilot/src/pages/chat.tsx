@@ -33,6 +33,7 @@ const QUICK_ACTIONS = [
  betaClaim: true,
  },
  { label: "Portfolio", prompt: "What's in my portfolio?", icon: LayoutDashboard },
+  { label: "Deposit DeFindex", prompt: "deposit 10 XLM into defindex", icon: Sparkles },
 ];
 
 function looksLikeIntent(text: string): boolean {

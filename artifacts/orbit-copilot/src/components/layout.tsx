@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
- Orbit,
  PanelLeft,
  SquarePen,
  Search,
@@ -193,9 +192,11 @@ export function Layout({
  <div className="flex h-full w-[260px] max-w-[85vw] flex-col bg-sidebar">
  <div className="flex h-14 items-center justify-between px-3">
  <div className="flex items-center gap-2 px-1">
- <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-orbit-gradient shadow-sm">
- <Orbit className="h-4 w-4 text-white" />
- </div>
+ <img
+ src="/orbit-logo-ui.png"
+ alt="Orbit"
+ className="h-8 w-8 rounded-xl object-cover shadow-sm"
+ />
  <span className="text-[15px] font-bold text-orbit-gradient">Orbit</span>
  </div>
  <button
@@ -422,8 +423,13 @@ export function Layout({
  )}
  <button
  type="button"
- className="flex min-w-0 items-center gap-1 rounded-lg px-2 py-1.5 text-[15px] font-semibold hover:bg-primary/5"
+ className="flex min-w-0 items-center gap-1.5 rounded-lg px-2 py-1.5 text-[15px] font-semibold hover:bg-primary/5"
  >
+ <img
+ src="/orbit-logo-ui.png"
+ alt=""
+ className="h-6 w-6 shrink-0 rounded-lg object-cover"
+ />
  <span className="truncate text-orbit-gradient">Orbit</span>
  <ChevronDown className="h-4 w-4 shrink-0 text-primary/60" />
  </button>

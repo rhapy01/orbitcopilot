@@ -245,6 +245,37 @@ export async function insertFeedback(input: {
  };
 }
 
+/** Full feedback export for Blue Belt / reviewer writeups (all rows). */
+export async function listAllFeedback(): Promise<
+ {
+ id: number;
+ rating: number;
+ message: string;
+ walletPublicKey: string | null;
+ createdAt: string;
+ }[]
+> {
+ await ensureProductSchema();
+ const rows = await db
+ .select({
+ id: feedbackTable.id,
+ rating: feedbackTable.rating,
+ message: feedbackTable.message,
+ walletPublicKey: feedbackTable.walletPublicKey,
+ createdAt: feedbackTable.createdAt,
+ })
+ .from(feedbackTable)
+ .orderBy(desc(feedbackTable.createdAt));
+
+ return rows.map((f) => ({
+ id: f.id,
+ rating: f.rating,
+ message: f.message,
+ walletPublicKey: f.walletPublicKey,
+ createdAt: f.createdAt.toISOString(),
+ }));
+}
+
 export async function getBetaNftClaimedCount(): Promise<number> {
  await ensureProductSchema();
  const res = await db.execute(sql`

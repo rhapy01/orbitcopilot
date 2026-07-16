@@ -95,7 +95,11 @@ export interface ChatAction {
  | "orbit_supply_deposit"
  | "orbit_supply_withdraw"
  | "orbit_supply_claim"
- | "aquarius_swap"
+    | "defindex_deposit"
+    | "defindex_withdraw"
+    | "meridian_deposit"
+    | "meridian_withdraw"
+    | "aquarius_swap"
  | "connect_wallet"
  | "add_trustline";
  requestType?: number;
@@ -280,6 +284,22 @@ async function rebuildOrbitNativeXdr(
  case "orbit_supply_claim":
  endpoint = "/api/orbit-supply/claim";
  break;
+case "defindex_deposit":
+  endpoint = "/api/defindex/deposit";
+  body = { ...body, amount: action.sendAmount, asset: action.sendAsset ?? "XLM" };
+  break;
+case "defindex_withdraw":
+  endpoint = "/api/defindex/withdraw";
+  body = { ...body, amount: action.sendAmount, asset: action.sendAsset ?? "XLM" };
+  break;
+case "meridian_deposit":
+  endpoint = "/api/meridian/deposit";
+  body = { ...body, amount: action.sendAmount };
+  break;
+case "meridian_withdraw":
+  endpoint = "/api/meridian/withdraw";
+  body = { ...body, amount: action.sendAmount, shares: action.sendAmount };
+  break;
  case "blend_usdc_swap":
  endpoint = "/api/blend/swap-usdc";
  body = {
@@ -390,7 +410,11 @@ function isOrbitNativeAction(type: ChatAction["type"]) {
  type === "orbit_supply_deposit" ||
  type === "orbit_supply_withdraw" ||
  type === "orbit_supply_claim" ||
- type === "blend_claim" ||
+    type === "defindex_deposit" ||
+    type === "defindex_withdraw" ||
+    type === "meridian_deposit" ||
+    type === "meridian_withdraw" ||
+    type === "blend_claim" ||
  type === "blend_usdc_swap" ||
  type === "aquarius_swap"
  );
@@ -446,7 +470,15 @@ function actionTitle(action: ChatAction): string {
  return "Orbit Supply Withdraw";
  case "orbit_supply_claim":
  return "Claim Orbit Yield";
- case "steldex_swap":
+    case "defindex_deposit":
+      return "DeFindex Deposit";
+    case "defindex_withdraw":
+      return "DeFindex Withdraw";
+    case "meridian_deposit":
+      return "Meridian Deposit";
+    case "meridian_withdraw":
+      return "Meridian Withdraw";
+    case "steldex_swap":
  return "StelDex Swap";
  case "steldex_add_liquidity":
  return "Add Liquidity";

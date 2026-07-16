@@ -9,6 +9,8 @@ export type ProtocolId =
  | "soroswap"
  | "aquarius"
  | "blend"
+ | "defindex"
+ | "meridian"
  | "reflector"
  | "friendbot"
  | "phoenix"
@@ -86,6 +88,28 @@ export const PROTOCOL_REGISTRY: ProtocolInfo[] = [
  docs: "https://docs.blend.capital",
  notes:
  "Live UI pool CAPBM… - Circle USDC + XLM + CETES + TESOURO. Supply as collateral; claim BLND emissions.",
+ },
+ {
+ id: "defindex",
+ name: "DeFindex",
+ category: "lending",
+ network: "testnet",
+ status: "live",
+ capabilities: ["vault-deposit", "vault-withdraw", "apy"],
+ docs: "https://docs.defindex.io",
+ notes:
+ "Public PaltaLabs vaults: XLM + Blend USDC + CETES. Chat: deposit/withdraw via api.defindex.io XDR.",
+ },
+ {
+ id: "meridian",
+ name: "Meridian",
+ category: "lending",
+ network: "testnet",
+ status: "live",
+ capabilities: ["vault-deposit", "vault-withdraw", "positions"],
+ docs: "https://github.com/drydocs/meridian",
+ notes:
+ "USDC vault CBQYE… routes to Blend via adapter. Uses Blend USDC (CAQCFV…).",
  },
  {
  id: "reflector",

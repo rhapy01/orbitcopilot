@@ -127,6 +127,17 @@ import {
 } from "../lib/orbit-supply";
 import { BETA_NFT_NAME, BETA_NFT_URI, BETA_NFT_MAX_SUPPLY } from "../lib/beta-nft";
 import { getBetaNftClaimedCount, resolveBetaNftStatus } from "../lib/product-store";
+import {
+  defindexConfigured,
+  formatDefindexStatus,
+  prepareDefindexDeposit,
+  prepareDefindexWithdraw,
+} from "../lib/defindex";
+import {
+  formatMeridianStatus,
+  prepareMeridianDeposit,
+  prepareMeridianWithdraw,
+} from "../lib/meridian";
 
 const router: IRouter = Router();
 
@@ -194,6 +205,18 @@ function isConnectWalletIntent(content: string): boolean {
 }
 
 const SUPPORTED_ASSETS = ["XLM", "USDC"];
+
+// DeFindex public vaults (testnet) — XLM + Blend USDC
+// "deposit 10 XLM into defindex" / "deposit 5 USDC into defindex" / "withdraw 2 xlm from defindex"
+const DEFINDEX_DEPOSIT_RE =
+  /\b(?:deposit|supply|stake)\s+([\d.]+)\s*(xlm|usdc|cetes)\b(?:.*?\b(?:into|to|on|in)\b.*?\bdefindex\b|\s+defindex\b)|\bdefindex\b.*?\b(?:deposit|supply)\s+([\d.]+)\s*(xlm|usdc|cetes)\b/i;
+const DEFINDEX_WITHDRAW_RE =
+  /\bwithdraw\s+([\d.]+)\s*(xlm|usdc|cetes)\b(?:.*?\b(?:from|on)\b.*?\bdefindex\b|\s+defindex\b)|\bdefindex\b.*?\bwithdraw\s+([\d.]+)\s*(xlm|usdc|cetes)\b/i;
+// Meridian USDC vault
+const MERIDIAN_DEPOSIT_RE =
+  /\b(?:deposit|supply)\s+([\d.]+)\s*usdc\b(?:.*?\b(?:into|to|on|in)\b.*?\bmeridian\b|\s+meridian\b)|\bmeridian\b.*?\b(?:deposit|supply)\s+([\d.]+)\s*usdc\b/i;
+const MERIDIAN_WITHDRAW_RE =
+  /\bwithdraw\s+([\d.]+)\s*(?:usdc|musdc|shares?)?\b(?:.*?\b(?:from|on)\b.*?\bmeridian\b|\s+meridian\b)|\bmeridian\b.*?\bwithdraw\s+([\d.]+)/i;
 
 type ChatReply = {
  text: string;
@@ -308,8 +331,12 @@ interface ChatAction {
  | "nft_transfer"
  | "orbit_supply_deposit"
  | "orbit_supply_withdraw"
- | "orbit_supply_claim"
- | "aquarius_swap"
+    | "orbit_supply_claim"
+    | "defindex_deposit"
+    | "defindex_withdraw"
+    | "meridian_deposit"
+    | "meridian_withdraw"
+    | "aquarius_swap"
  | "connect_wallet"
  | "add_trustline";
  requestType?: number;
@@ -1679,6 +1706,132 @@ async function getDeterministicResponse(
  }
  }
  }
+
+// DeFindex — deposit / withdraw into the public testnet XLM vault
+{
+  if (/\bdefindex\b/i.test(content) && !DEFINDEX_DEPOSIT_RE.test(content) && !DEFINDEX_WITHDRAW_RE.test(content)) {
+    try {
+      return { text: await formatDefindexStatus(), action: null };
+    } catch (err: any) {
+      return { text: err?.message ?? "DeFindex unavailable", action: null };
+    }
+  }
+
+  const defiDeposit = content.match(DEFINDEX_DEPOSIT_RE);
+  if (defiDeposit) {
+    if (!publicKey) return { text: AI_RESPONSES.connectWallet, action: null };
+    if (!defindexConfigured()) {
+      return { text: "DeFindex is not configured yet. Set DEFINDEX_API_KEY in .env.", action: null };
+    }
+    const amount = String(defiDeposit[1] || defiDeposit[3] || "10");
+    const asset = String(defiDeposit[2] || defiDeposit[4] || "XLM");
+    try {
+      const prepared = await prepareDefindexDeposit({
+        walletAddress: publicKey,
+        amount,
+        asset,
+      });
+      return {
+        text: prepared.message,
+        action: {
+          type: "defindex_deposit",
+          sendAmount: prepared.sendAmount,
+          sendAsset: prepared.sendAsset,
+          poolContract: prepared.vaultAddress,
+          xdr: prepared.xdr,
+          networkPassphrase: prepared.networkPassphrase,
+        } as ChatAction,
+      };
+    } catch (err: any) {
+      return { text: err?.message ?? "Could not prepare DeFindex deposit", action: null };
+    }
+  }
+
+  const defiWithdraw = content.match(DEFINDEX_WITHDRAW_RE);
+  if (defiWithdraw) {
+    if (!publicKey) return { text: AI_RESPONSES.connectWallet, action: null };
+    if (!defindexConfigured()) {
+      return { text: "DeFindex is not configured yet. Set DEFINDEX_API_KEY in .env.", action: null };
+    }
+    const amount = String(defiWithdraw[1] || defiWithdraw[3] || "1");
+    const asset = String(defiWithdraw[2] || defiWithdraw[4] || "XLM");
+    try {
+      const prepared = await prepareDefindexWithdraw({
+        walletAddress: publicKey,
+        amount,
+        asset,
+      });
+      return {
+        text: prepared.message,
+        action: {
+          type: "defindex_withdraw",
+          sendAmount: prepared.sendAmount,
+          sendAsset: prepared.sendAsset,
+          poolContract: prepared.vaultAddress,
+          xdr: prepared.xdr,
+          networkPassphrase: prepared.networkPassphrase,
+        } as ChatAction,
+      };
+    } catch (err: any) {
+      return { text: err?.message ?? "Could not prepare DeFindex withdraw", action: null };
+    }
+  }
+}
+
+// Meridian USDC vault (Blend adapter)
+{
+  if (/\bmeridian\b/i.test(content) && !MERIDIAN_DEPOSIT_RE.test(content) && !MERIDIAN_WITHDRAW_RE.test(content)) {
+    try {
+      return { text: await formatMeridianStatus(publicKey), action: null };
+    } catch (err: any) {
+      return { text: err?.message ?? "Meridian unavailable", action: null };
+    }
+  }
+
+  const merDeposit = content.match(MERIDIAN_DEPOSIT_RE);
+  if (merDeposit) {
+    if (!publicKey) return { text: AI_RESPONSES.connectWallet, action: null };
+    const amount = String(merDeposit[1] || merDeposit[2] || "10");
+    try {
+      const prepared = await prepareMeridianDeposit({ walletAddress: publicKey, amount });
+      return {
+        text: prepared.message,
+        action: {
+          type: "meridian_deposit",
+          sendAmount: prepared.sendAmount,
+          sendAsset: prepared.sendAsset,
+          poolContract: prepared.vaultAddress,
+          xdr: prepared.xdr,
+          networkPassphrase: prepared.networkPassphrase,
+        } as ChatAction,
+      };
+    } catch (err: any) {
+      return { text: err?.message ?? "Could not prepare Meridian deposit", action: null };
+    }
+  }
+
+  const merWithdraw = content.match(MERIDIAN_WITHDRAW_RE);
+  if (merWithdraw) {
+    if (!publicKey) return { text: AI_RESPONSES.connectWallet, action: null };
+    const shares = String(merWithdraw[1] || merWithdraw[2] || "1");
+    try {
+      const prepared = await prepareMeridianWithdraw({ walletAddress: publicKey, shares });
+      return {
+        text: prepared.message,
+        action: {
+          type: "meridian_withdraw",
+          sendAmount: prepared.sendAmount,
+          sendAsset: prepared.sendAsset,
+          poolContract: prepared.vaultAddress,
+          xdr: prepared.xdr,
+          networkPassphrase: prepared.networkPassphrase,
+        } as ChatAction,
+      };
+    } catch (err: any) {
+      return { text: err?.message ?? "Could not prepare Meridian withdraw", action: null };
+    }
+  }
+}
 
  // Reflector / oracle prices (also covered by market intent)
  if (!readQueries) {
