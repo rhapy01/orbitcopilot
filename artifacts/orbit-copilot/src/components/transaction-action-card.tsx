@@ -92,6 +92,10 @@ export interface ChatAction {
  | "nft_list"
  | "nft_buy"
  | "nft_transfer"
+ | "nft_cancel"
+ | "nft_create_collection"
+ | "token_deploy"
+ | "token_mint"
  | "orbit_supply_deposit"
  | "orbit_supply_withdraw"
  | "orbit_supply_claim"
@@ -138,6 +142,10 @@ export interface ChatAction {
  notionalUsdc?: number;
  tokenId?: number;
  metadataUri?: string;
+ tokenName?: string;
+ description?: string;
+ imageUrl?: string;
+ website?: string;
  priceXlm?: string;
  markPriceStale?: boolean;
  xdr?: string;
@@ -240,10 +248,22 @@ async function rebuildOrbitNativeXdr(
  endpoint = "/api/nft/mint";
  body = {
  ...body,
- name: action.sendAsset,
- metadataUri: action.metadataUri ?? action.marketHint,
+ name: action.sendAsset ?? action.marketHint,
+ metadataUri: action.metadataUri,
  };
  }
+ break;
+ case "nft_create_collection":
+ endpoint = "/api/nft/create-collection";
+ body = {
+ ...body,
+ name: action.marketHint?.replace(/\s*\([^)]*\)\s*$/, "").trim() || "Orbit Collection",
+ symbol: action.sendAsset || "ORB",
+ };
+ break;
+ case "nft_cancel":
+ endpoint = "/api/nft/cancel";
+ body = { ...body, tokenId: action.tokenId };
  break;
  case "nft_list":
  endpoint = "/api/nft/list";
@@ -263,6 +283,25 @@ async function rebuildOrbitNativeXdr(
  ...body,
  tokenId: action.tokenId,
  to: action.destination,
+ };
+ break;
+ case "token_deploy":
+ endpoint = "/api/token/deploy";
+ body = {
+ ...body,
+ code: action.sendAsset,
+ name: action.tokenName,
+ description: action.description,
+ image: action.imageUrl,
+ website: action.website,
+ };
+ break;
+ case "token_mint":
+ endpoint = "/api/token/mint";
+ body = {
+ ...body,
+ code: action.sendAsset,
+ amount: action.sendAmount,
  };
  break;
  case "orbit_supply_deposit":
@@ -407,6 +446,10 @@ function isOrbitNativeAction(type: ChatAction["type"]) {
  type === "nft_list" ||
  type === "nft_buy" ||
  type === "nft_transfer" ||
+ type === "nft_cancel" ||
+ type === "nft_create_collection" ||
+ type === "token_deploy" ||
+ type === "token_mint" ||
  type === "orbit_supply_deposit" ||
  type === "orbit_supply_withdraw" ||
  type === "orbit_supply_claim" ||
@@ -457,13 +500,21 @@ function actionTitle(action: ChatAction): string {
  case "perp_close":
  return "Close Perpetual";
  case "nft_mint":
- return "Mint NFT";
+ return "Mint NFT (SEP-50)";
+ case "nft_create_collection":
+ return "Create NFT Collection";
+ case "nft_cancel":
+ return "Cancel NFT Listing";
  case "nft_list":
  return "List NFT";
  case "nft_buy":
  return "Buy NFT";
  case "nft_transfer":
  return "Transfer NFT";
+ case "token_deploy":
+ return "Deploy Token (SAC)";
+ case "token_mint":
+ return "Mint Token Supply";
  case "orbit_supply_deposit":
  return "Orbit Supply Deposit";
  case "orbit_supply_withdraw":
@@ -840,6 +891,22 @@ export function TransactionActionCard({
  metadata: { actionType: action.type },
  });
  } else if (status === "success") {
+ if (
+ action.type === "token_deploy" &&
+ publicKey &&
+ hash &&
+ action.sendAsset
+ ) {
+ void fetch("/api/token/confirm", {
+ method: "POST",
+ headers: { "Content-Type": "application/json" },
+ body: JSON.stringify({
+ walletAddress: publicKey,
+ code: action.sendAsset,
+ txHash: hash,
+ }),
+ }).catch(() => {});
+ }
  track("tx_submit", {
  walletPublicKey: publicKey,
  metadata: { actionType: action.type, txHash: hash },
@@ -1462,7 +1529,7 @@ export function TransactionActionCard({
  )}
  </>
  )}
- {(action.type === "nft_mint" || action.type === "nft_list" || action.type === "nft_buy" || action.type === "nft_transfer") && (
+ {(action.type === "nft_mint" || action.type === "nft_list" || action.type === "nft_buy" || action.type === "nft_transfer" || action.type === "nft_cancel" || action.type === "nft_create_collection" || action.type === "token_deploy" || action.type === "token_mint") && (
  <>
  {action.tokenId != null && (
  <div className="flex justify-between">

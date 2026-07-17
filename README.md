@@ -40,7 +40,8 @@ Postgres and Redis are **product infrastructure only** (chat history, sessions, 
 | **Aquarius / Blend** | Pool quotes, lend/borrow when live | Protocol adapters + health checks |
 | **Orbit Prediction Markets** | `"list sports markets"` → bet → claim | Soroban; XLM stakes **in** the contract |
 | **Orbit Perpetuals** | `"open a 200 USDC long on bitcoin at 5x"` | Soroban; USDC margin **in** the contract |
-| **Orbit NFT** | `"mint an NFT called …"`, list / buy / transfer | Soroban; XLM settlement |
+| **Orbit NFT (SEP-50)** | create collection, mint with metadata, list / buy / transfer | Soroban SEP-50 + OpenSea-style JSON |
+| **Token launch** | `"launch token FOOX supply 1000000"` | Classic asset + SEP-41 SAC |
 | **Beta Tester NFT** | Submit feedback → `"claim my beta NFT"` | One mint per wallet after feedback |
 | **Wallets** | Freighter **or** Orbit embedded (passkey + email recovery) | Client signs; server never holds user keys (embedded keys are KMS-wrapped) |
 | **Chat + LLM** | Deterministic intents first; OpenRouter for free-form | Intents in `chat-intents.ts`; RAG knowledge for explanations |
@@ -122,7 +123,8 @@ Wallet signing surface: `artifacts/orbit-copilot/src/components/transaction-acti
 |---|---|---|
 | **Prediction** | `CBSTVO2UCF2XVMHXFAKS5I2XMURT222MY5OWOXITW45B2AB6R7FHMTDC` | [Stellar Expert](https://stellar.expert/explorer/testnet/contract/CBSTVO2UCF2XVMHXFAKS5I2XMURT222MY5OWOXITW45B2AB6R7FHMTDC) |
 | **Perpetuals** | `CC2IDBXQLA5L6NDWMGV3M6JH5NVK6NG26HMQCEYEHLJUJ7Q35KXADT3G` | [Stellar Expert](https://stellar.expert/explorer/testnet/contract/CC2IDBXQLA5L6NDWMGV3M6JH5NVK6NG26HMQCEYEHLJUJ7Q35KXADT3G) |
-| **NFT** | `CAG4ST6W7I5QYW5SFC4I7YRN32AHD4UH5WTYHJWHHJM6VPTNF3ETSETM` | [Stellar Expert](https://stellar.expert/explorer/testnet/contract/CAG4ST6W7I5QYW5SFC4I7YRN32AHD4UH5WTYHJWHHJM6VPTNF3ETSETM) |
+| **NFT (SEP-50)** | `CA34E5V5SAV64PPMS7IKARAVUV3B423PLPCMNPJ6WALXP4Q3KS2C64HU` | [Stellar Expert](https://stellar.expert/explorer/testnet/contract/CA34E5V5SAV64PPMS7IKARAVUV3B423PLPCMNPJ6WALXP4Q3KS2C64HU) |
+| **NFT Factory** | `CB6PGYXVPCTJY5PILVFGFMI5WI5GCUI36GG6T7443YVJNV6EZ73FQJ55` | [Stellar Expert](https://stellar.expert/explorer/testnet/contract/CB6PGYXVPCTJY5PILVFGFMI5WI5GCUI36GG6T7443YVJNV6EZ73FQJ55) |
 
 | Token | Testnet SAC |
 |---|---|
@@ -178,7 +180,9 @@ Deterministic handlers (preferred over LLM). Full regex set: `artifacts/api-serv
 | Predict claim | `claim yes on chelsea-arsenal-epl` |
 | Perps open | `open a 200 USDC long on bitcoin at 5x` |
 | Perps close | `close my BTC perp` |
-| NFT mint | `mint an NFT called Stellar Fox` |
+| NFT collection | `create NFT collection Orbit Foxes symbol FOX` |
+| NFT mint | `mint an NFT called Stellar Fox image https://… traits Background=Nebula` |
+| Token launch | `launch token FOOX supply 1000000` |
 | NFT list | `list NFT #1 for 5 XLM` |
 | NFT buy | `buy NFT #1` |
 | NFT transfer | `transfer NFT #1 to G…` |

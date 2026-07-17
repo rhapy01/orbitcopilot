@@ -80,12 +80,19 @@ import {
 import {
  formatNftCatalog,
  getNftHoldings,
+ prepareCreateCollection,
  prepareNftBuy,
+ prepareNftCancelListing,
  prepareNftList,
  prepareNftMint,
  prepareNftTransfer,
  type NftGalleryPayload,
 } from "../lib/nft";
+import {
+ formatTokenLaunchHelp,
+ prepareTokenLaunch,
+ prepareTokenMint,
+} from "../lib/token-launch";
 import {
  BlendRequestType,
  formatBlendMarkets,
@@ -109,7 +116,9 @@ import { timed } from "../lib/metrics";
 import {
  FAUCET_RE,
  NFT_BUY_RE,
+ NFT_CANCEL_RE,
  NFT_CLAIM_BETA_RE,
+ NFT_CREATE_COLLECTION_RE,
  NFT_LIST_RE,
  NFT_MINT_RE,
  NFT_TRANSFER_RE,
@@ -118,6 +127,8 @@ import {
  ORBIT_SUPPLY_WITHDRAW_RE,
  PERP_CLOSE_RE,
  PREDICT_CLAIM_RE,
+ TOKEN_LAUNCH_RE,
+ TOKEN_MINT_SUPPLY_RE,
 } from "../lib/chat-intents";
 import {
  formatOrbitSupplyStatus,
@@ -329,6 +340,10 @@ interface ChatAction {
  | "nft_list"
  | "nft_buy"
  | "nft_transfer"
+ | "nft_cancel"
+ | "nft_create_collection"
+ | "token_deploy"
+ | "token_mint"
  | "orbit_supply_deposit"
  | "orbit_supply_withdraw"
     | "orbit_supply_claim"
@@ -353,6 +368,10 @@ interface ChatAction {
  notionalUsdc?: number;
  tokenId?: number;
  metadataUri?: string;
+ tokenName?: string;
+ description?: string;
+ imageUrl?: string;
+ website?: string;
  priceXlm?: string;
  markPriceStale?: boolean;
  xdr?: string;
@@ -1211,6 +1230,105 @@ async function getDeterministicResponse(
  }
  }
 
+ if (/\b(?:token\s+launch|launchpad\s+token|how\s+to\s+launch\s+token)\b/i.test(content)) {
+ return { text: formatTokenLaunchHelp(), action: null };
+ }
+
+ const createCollection = content.match(NFT_CREATE_COLLECTION_RE);
+ if (createCollection) {
+ if (!publicKey) return { text: AI_RESPONSES.connectWallet, action: null };
+ try {
+ const name = createCollection[1]?.trim() || "Orbit Collection";
+ const symbol =
+ createCollection[2]?.trim() ||
+ name.replace(/[^A-Za-z0-9]/g, "").slice(0, 6).toUpperCase() ||
+ "ORB";
+ const maxSupply = createCollection[3] ? parseInt(createCollection[3], 10) : 0;
+ const created = await prepareCreateCollection({
+ walletAddress: publicKey,
+ name,
+ symbol,
+ maxSupply: Number.isFinite(maxSupply) ? maxSupply : 0,
+ openMint: true,
+ });
+ return {
+ text: created.message,
+ action: {
+ type: "nft_create_collection",
+ marketHint: `${created.name} (${created.symbol})`,
+ sendAsset: created.symbol,
+ xdr: created.xdr,
+ networkPassphrase: created.networkPassphrase,
+ } as ChatAction,
+ };
+ } catch (err: any) {
+ return { text: err?.message ?? "Create collection failed", action: null };
+ }
+ }
+
+ const tokenLaunch = content.match(TOKEN_LAUNCH_RE);
+ if (tokenLaunch) {
+ if (!publicKey) return { text: AI_RESPONSES.connectWallet, action: null };
+ try {
+ const supply = content.match(/\b(?:supply|amount)\s+([\d.]+)/i)?.[1];
+ const tokenName = content.match(/\b(?:named|name)\s+["']([^"']+)["']/i)?.[1];
+ const description = content.match(/\bdescription\s+["']([^"']+)["']/i)?.[1];
+ const image = content.match(/\bimage\s+(https?:\/\/\S+)/i)?.[1];
+ const website = content.match(/\bwebsite\s+(https?:\/\/\S+)/i)?.[1];
+ const launched = await prepareTokenLaunch({
+ walletAddress: publicKey,
+ code: tokenLaunch[1],
+ amount: supply ?? tokenLaunch[2],
+ metadata: { name: tokenName, description, image, website },
+ });
+ if (!launched.xdr) {
+ return { text: launched.message, action: null };
+ }
+ return {
+ text: launched.message,
+ action: {
+ type: launched.type,
+ sendAsset: launched.code,
+ sendAmount: "amount" in launched ? launched.amount : undefined,
+ tokenName,
+ description,
+ imageUrl: image,
+ website,
+ marketHint: launched.contractId,
+ xdr: launched.xdr,
+ networkPassphrase: launched.networkPassphrase,
+ } as ChatAction,
+ };
+ } catch (err: any) {
+ return { text: err?.message ?? "Token launch failed", action: null };
+ }
+ }
+
+ const tokenMintSupply = content.match(TOKEN_MINT_SUPPLY_RE);
+ if (tokenMintSupply) {
+ if (!publicKey) return { text: AI_RESPONSES.connectWallet, action: null };
+ try {
+ const minted = await prepareTokenMint({
+ walletAddress: publicKey,
+ amount: tokenMintSupply[1],
+ code: tokenMintSupply[2],
+ });
+ return {
+ text: minted.message,
+ action: {
+ type: "token_mint",
+ sendAsset: minted.code,
+ sendAmount: minted.amount,
+ marketHint: minted.contractId,
+ xdr: minted.xdr,
+ networkPassphrase: minted.networkPassphrase,
+ } as ChatAction,
+ };
+ } catch (err: any) {
+ return { text: err?.message ?? "Token mint failed", action: null };
+ }
+ }
+
  const nftMint = content.match(NFT_MINT_RE);
  if (nftMint) {
  if (!publicKey) return { text: AI_RESPONSES.connectWallet, action: null };
@@ -1219,6 +1337,8 @@ async function getDeterministicResponse(
  walletAddress: publicKey,
  name: nftMint[1]?.trim(),
  metadataUri: nftMint[2]?.trim(),
+ image: nftMint[3]?.trim(),
+ traits: nftMint[4]?.trim(),
  });
  return {
  text: minted.message,
@@ -1232,6 +1352,29 @@ async function getDeterministicResponse(
  };
  } catch (err: any) {
  return { text: err?.message ?? "Mint failed", action: null };
+ }
+ }
+
+ const nftCancel = content.match(NFT_CANCEL_RE);
+ if (nftCancel) {
+ if (!publicKey) return { text: AI_RESPONSES.connectWallet, action: null };
+ try {
+ const tokenId = parseInt(nftCancel[1] || nftCancel[2], 10);
+ const cancelled = await prepareNftCancelListing({
+ walletAddress: publicKey,
+ tokenId,
+ });
+ return {
+ text: cancelled.message,
+ action: {
+ type: "nft_cancel",
+ tokenId: cancelled.tokenId,
+ xdr: cancelled.xdr,
+ networkPassphrase: cancelled.networkPassphrase,
+ } as ChatAction,
+ };
+ } catch (err: any) {
+ return { text: err?.message ?? "Cancel listing failed", action: null };
  }
  }
 

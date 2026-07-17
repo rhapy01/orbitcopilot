@@ -5,6 +5,7 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import pinoHttp from "pino-http";
 import router from "./routes";
+import stellarTomlRouter from "./routes/stellar-toml";
 import { logger } from "./lib/logger";
 import { rateLimit } from "./lib/rate-limit";
 import { sessionMiddleware } from "./lib/session";
@@ -45,6 +46,7 @@ app.use("/api/auth/recover/send-otp", rateLimit({ windowMs: 15 * 60_000, max: 5 
 app.use("/api/auth/recover/complete", rateLimit({ windowMs: 60 * 60_000, max: 10 }));
 app.use("/api/internal-wallet/export", rateLimit({ windowMs: 60 * 60_000, max: 5 }));
 app.use(sessionMiddleware as express.RequestHandler);
+app.use(stellarTomlRouter);
 app.use("/api", router);
 
 export default app;

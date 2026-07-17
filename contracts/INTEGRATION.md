@@ -23,8 +23,11 @@ and **TypeScript callers** (API + frontend).
 | orbit-predict | `claim` | `predict_claim` | `api-server/src/lib/predict.ts` |
 | orbit-perps | `open_position` | `perp_open` | `api-server/src/lib/perps.ts` |
 | orbit-perps | `close_position` | `perp_close` | `api-server/src/lib/perps.ts` |
-| orbit-nft | `mint` | `nft_mint` | `api-server/src/lib/nft.ts` |
-| orbit-nft | `buy` / `list_for_sale` | `nft_buy` / `nft_list` | `api-server/src/lib/nft.ts` |
+| orbit-nft (SEP-50) | `mint` | `nft_mint` | `api-server/src/lib/nft.ts` |
+| orbit-nft | `buy` / `list_for_sale` / `cancel_listing` | `nft_buy` / `nft_list` / `nft_cancel` | `api-server/src/lib/nft.ts` |
+| orbit-nft | `name` / `symbol` / `token_uri` / `approve`… | SEP-50 reads | Freighter / wallets |
+| orbit-nft-factory | `create_collection` | `nft_create_collection` | `api-server/src/lib/nft.ts` |
+| classic + SAC | `createStellarAssetContract` / `mint` | `token_deploy` / `token_mint` | `api-server/src/lib/token-launch.ts` |
 | orbit-supply | `supply` | `orbit_supply_deposit` | `api-server/src/lib/orbit-supply.ts` + `orbit-copilot/src/lib/contract.ts` |
 | orbit-supply | `withdraw` | `orbit_supply_withdraw` | same |
 | orbit-supply | `claim` | `orbit_supply_claim` | same |

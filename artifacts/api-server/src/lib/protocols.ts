@@ -17,12 +17,22 @@ export type ProtocolId =
  | "orbit-predict"
  | "orbit-perps"
  | "orbit-nft"
+ | "orbit-token-launch"
  | "orbit-supply";
 
 export interface ProtocolInfo {
  id: ProtocolId;
  name: string;
- category: "wallet-infra" | "dex" | "amm" | "lending" | "oracle" | "aggregator" | "faucet" | "nft";
+ category:
+ | "wallet-infra"
+ | "dex"
+ | "amm"
+ | "lending"
+ | "oracle"
+ | "aggregator"
+ | "faucet"
+ | "nft"
+ | "token";
  network: "testnet";
  status: "live" | "partial" | "external-down";
  capabilities: string[];
@@ -149,12 +159,34 @@ export const PROTOCOL_REGISTRY: ProtocolInfo[] = [
  },
  {
  id: "orbit-nft",
- name: "Orbit NFT",
+ name: "Orbit NFT (SEP-50)",
  category: "nft",
  network: "testnet",
  status: "live",
- capabilities: ["mint", "list", "buy", "transfer", "holdings"],
- notes: "Soroban contract - XLM fixed-price marketplace (contracts/orbit-nft)",
+ capabilities: [
+ "create-collection",
+ "mint",
+ "list",
+ "buy",
+ "transfer",
+ "cancel-listing",
+ "approve",
+ "holdings",
+ "sep50-metadata",
+ ],
+ docs: "https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0050.md",
+ notes:
+ "SEP-50 NFT launchpad + XLM marketplace. Factory deploys per-creator collections; metadata is OpenSea-compatible JSON.",
+ },
+ {
+ id: "orbit-token-launch",
+ name: "Orbit Token Launch",
+ category: "token",
+ network: "testnet",
+ status: "live",
+ capabilities: ["deploy-sac", "mint-supply"],
+ docs: "https://developers.stellar.org/docs/tokens/stellar-asset-contract",
+ notes: "Classic asset issuer + SEP-41 SAC deploy/mint from chat.",
  },
  {
  id: "orbit-supply",

@@ -28,14 +28,64 @@ PERPS_ID=$(stellar contract deploy \
  --source orbit-admin --network testnet)
 ```
 
-### Orbit NFT
+### Orbit NFT (SEP-50 collection + marketplace)
+
+Redeploy required after the SEP-50 upgrade (`initialize` now takes name/symbol/base_uri/max_supply/open_mint).
 
 ```bash
 cd contracts/orbit-nft && stellar contract build
+NFT_WASM=target/wasm32v1-none/release/orbit_nft.wasm
 NFT_ID=$(stellar contract deploy \
- --wasm target/wasm32v1-none/release/orbit_nft.wasm \
+ --wasm $NFT_WASM \
  --source orbit-admin --network testnet)
+
+# XLM SAC payment token on testnet
+XLM_SAC=CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC
+
+stellar contract invoke --id $NFT_ID --source orbit-admin --network testnet -- \
+  initialize \
+  --admin $(stellar keys address orbit-admin) \
+  --name "Orbit Collection" \
+  --symbol "ORBIT" \
+  --base_uri "https://orbitpilot.vercel.app/api/nft/meta/" \
+  --payment_token $XLM_SAC \
+  --max_supply 0 \
+  --open_mint true
 ```
+
+### Orbit NFT Factory (optional — anyone creates collections)
+
+```bash
+cd contracts/orbit-nft-factory && stellar contract build
+
+# Upload collection WASM, note the hash:
+WASM_HASH=$(stellar contract install --wasm ../orbit-nft/target/wasm32v1-none/release/orbit_nft.wasm \
+  --source orbit-admin --network testnet)
+
+FACTORY_ID=$(stellar contract deploy \
+  --wasm target/wasm32v1-none/release/orbit_nft_factory.wasm \
+  --source orbit-admin --network testnet)
+
+stellar contract invoke --id $FACTORY_ID --source orbit-admin --network testnet -- \
+  initialize \
+  --admin $(stellar keys address orbit-admin) \
+  --wasm_hash $WASM_HASH \
+  --payment_token CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC
+```
+
+Env:
+
+```env
+ORBIT_NFT_CONTRACT_ID=$NFT_ID
+ORBIT_NFT_FACTORY_CONTRACT_ID=$FACTORY_ID
+```
+
+Chat:
+
+- `create NFT collection Orbit Foxes symbol FOX`
+- `mint an NFT called Stellar Fox image https://… traits Background=Nebula`
+- `list NFT #1 for 5 XLM` · `buy NFT #1` · `cancel listing NFT #1`
+- `launch token FOOX supply 1000000` · `mint 50000 FOOX`
 
 ### Orbit Supply (yield) - deployed testnet
 
