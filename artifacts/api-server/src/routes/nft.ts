@@ -210,6 +210,10 @@ router.post("/nft/create-collection", async (req, res): Promise<void> => {
         typeof req.body?.externalUrl === "string" ? req.body.externalUrl : undefined,
       maxSupply: req.body?.maxSupply != null ? Number(req.body.maxSupply) : 0,
       openMint: req.body?.openMint !== false,
+      royaltyBps:
+        req.body?.royaltyBps != null
+          ? Number(req.body.royaltyBps)
+          : undefined,
     });
     res.status(201).json(result);
   } catch (err: any) {

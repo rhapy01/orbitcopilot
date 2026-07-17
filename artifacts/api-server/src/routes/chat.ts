@@ -70,6 +70,38 @@ import {
  resolvePredictionMarkets,
  setPendingPredictBet,
 } from "../lib/predict";
+import {
+  clarifyPrompt,
+  clearPendingAction,
+  getPendingAction,
+  INCOMPLETE_BORROW_RE,
+  INCOMPLETE_DEPOSIT_RE,
+  INCOMPLETE_REPAY_RE,
+  INCOMPLETE_SEND_RE,
+  INCOMPLETE_SUPPLY_RE,
+  INCOMPLETE_SWAP_DEST_RE,
+  INCOMPLETE_SWAP_PAIR_RE,
+  INCOMPLETE_WITHDRAW_RE,
+  parseFollowUpAmount,
+  parseFollowUpAsset,
+  pendingActionKey,
+  setPendingAction,
+  synthesizeIntentFromPending,
+  synthesizeLpIntentFromPending,
+} from "../lib/pending-action";
+import {
+  askForCollectionDetails,
+  askForCollectionMedia,
+  clearNftCollectionDraft,
+  extractImageUrl,
+  getNftCollectionDraft,
+  isCancelWizard,
+  isUploadIntent,
+  nftCollectionDraftKey,
+  parseDetailsReply,
+  setNftCollectionDraft,
+} from "../lib/pending-nft-collection";
+import { isLpAutoAmount } from "../lib/defi-math";
 import { parseMultiSwapEach } from "../lib/multi-action";
 import {
  formatPerpMarkets,
@@ -80,7 +112,8 @@ import {
 import {
  formatNftCatalog,
  getNftHoldings,
- prepareCreateCollection,
+ collectionPromptComplete,
+ parseCollectionPromptFields,
  prepareNftBuy,
  prepareNftCancelListing,
  prepareNftList,
@@ -100,7 +133,6 @@ import {
  resolveBlendReserve,
 } from "../lib/blend";
 import {
- faucetSoroswapToken,
  formatSoroswapPositions,
  formatSoroswapStatus,
  getSoroswapPositions,
@@ -163,7 +195,7 @@ const AI_RESPONSES = {
  connectWallet:
  "Connect Freighter or your Orbit embedded wallet using the button in the header so I can read balances and prepare transactions.",
  steldexHelp:
- "Unicorn StelDex (Testnet) - three different actions:\n\n1. Liquidity provision (requires 2 assets):\n \"add 10 XLM and 10 pUSDC to liquidity pool on StelDex\"\n\n2. Yield farming (stake the LP tokens you got from step 1):\n \"stake my XLM/pUSDC LP for 52 weeks\"\n\n3. Single-asset staking (where supported):\n Stake a single token to earn rewards.\n\nOther actions:\n \"remove liquidity XLM/pUSDC\"\n \"claim rewards from XLM/pUSDC\"\n \"unstake XLM/pUSDC\"\n \"swap 10 XLM to pUSDC\"\n \"what do I have on StelDex?\"",
+ "Unicorn StelDex (Testnet) - three different actions:\n\n1. Liquidity provision (one amount + pair — Orbit auto-sizes the other side):\n \"add 100 USDC to liquidity\" → pick pair (XLM or pUSDC)\n \"add 100 USDC and XLM to liquidity on StelDex\"\n\n2. Yield farming (stake the LP tokens you got from step 1):\n \"stake my XLM/pUSDC LP for 52 weeks\"\n\n3. Single-asset staking (where supported):\n Stake a single token to earn rewards.\n\nOther actions:\n \"remove liquidity XLM/pUSDC\"\n \"claim rewards from XLM/pUSDC\"\n \"unstake XLM/pUSDC\"\n \"swap 10 XLM to pUSDC\"\n \"what do I have on StelDex?\"",
  steldexPoolNotFound:
  "I couldn't find that pool on StelDex. Ask for a pair like XLM/pUSDC, XLM/cUSDC, EURC/XLM, or STELLAR/XLM.",
  noPosition:
@@ -178,11 +210,28 @@ const STELDEX_STAKE_RE =
  /\bstake\b(?:.*?)\b([a-zA-Z]{2,10})\s*\/\s*([a-zA-Z]{2,10})\b(?:.*?(\d+)\s*weeks?)?/i;
 const STELDEX_UNSTAKE_RE = /\bunstake\b(?:.*?)\b([a-zA-Z]{2,10})\s*\/\s*([a-zA-Z]{2,10})\b/i;
 const STELDEX_CLAIM_RE = /\bclaim\b(?:.*?)\b([a-zA-Z]{2,10})\s*\/\s*([a-zA-Z]{2,10})\b/i;
-const STELDEX_ADD_LIQUIDITY_RE =
- /\badd\s+liquidity\s+([\d.]+)\s*([a-zA-Z]{2,10})\s+and\s+([\d.]+)\s*([a-zA-Z]{2,10})/i;
-// Handles "add 2xlm and 2pusdc to liquidity" / "add 2 xlm and 2 pusdc to liquidity pool"
-const STELDEX_ADD_LIQUIDITY_ALT_RE =
- /\badd\s+([\d.]+)\s*([a-zA-Z]{2,10})\s+and\s+([\d.]+)\s*([a-zA-Z]{2,10})\b(?:.*\bliquidit)/i;
+const LP_VERB = String.raw`(?:add|provide|supply)`;
+const LP_PAIR_SEP = String.raw`(?:and|with|\/|\+)`;
+const STELDEX_ADD_LIQUIDITY_RE = new RegExp(
+ String.raw`\b${LP_VERB}\s+liquidity\s+([\d.]+)\s*([a-zA-Z]{2,10})\s+${LP_PAIR_SEP}\s+([\d.]+|AUTO|\*|max)\s*([a-zA-Z]{2,10})`,
+ "i"
+);
+// Handles "add 2xlm and 2pusdc to liquidity" / "supply 100 usdc + 50 xlm as liquidity"
+const STELDEX_ADD_LIQUIDITY_ALT_RE = new RegExp(
+ String.raw`\b${LP_VERB}\s+([\d.]+)\s*([a-zA-Z]{2,10})\s+${LP_PAIR_SEP}\s+([\d.]+|AUTO|\*|max)\s*([a-zA-Z]{2,10})\b(?:.*\bliquidit)`,
+ "i"
+);
+// One-sided: amount + asset + pair asset (no second amount) — e.g. "supply 100 USDC + XLM as liquidity"
+const STELDEX_ADD_LIQUIDITY_ONE_SIDED_RE = new RegExp(
+ String.raw`\b${LP_VERB}\s+liquidity\s+([\d.]+)\s*([a-zA-Z]{2,10})\s+${LP_PAIR_SEP}\s+([a-zA-Z]{2,10})\b` +
+ String.raw`|\b${LP_VERB}\s+([\d.]+)\s*([a-zA-Z]{2,10})\s+${LP_PAIR_SEP}\s+([a-zA-Z]{2,10})\b(?:.*\bliquidit)`,
+ "i"
+);
+// Single amount only — ask for pair asset (never a second amount)
+const STELDEX_ADD_LIQUIDITY_SINGLE_RE = new RegExp(
+ String.raw`\b${LP_VERB}(?:\s+liquidity)?\s+([\d.]+)\s*([a-zA-Z]{2,10})\b(?!\s*${LP_PAIR_SEP}\s+[a-zA-Z])(?:.*\bliquidit)`,
+ "i"
+);
 const STELDEX_REMOVE_LIQUIDITY_RE =
  /\bremove\s+liquidity\b(?:.*?)\b([a-zA-Z]{2,10})\s*\/\s*([a-zA-Z]{2,10})\b/i;
 const STELDEX_LIMIT_ORDER_RE =
@@ -372,6 +421,10 @@ interface ChatAction {
  description?: string;
  imageUrl?: string;
  website?: string;
+ maxSupply?: number;
+ royaltyBps?: number;
+ /** User explicitly set max supply (including 0 = unlimited). */
+ supplySpecified?: boolean;
  priceXlm?: string;
  markPriceStale?: boolean;
  xdr?: string;
@@ -420,17 +473,48 @@ function withFullRange(
 
 async function parseSteldexIntents(
  content: string,
- publicKey: string | null
+ publicKey: string | null,
+ opts?: { sessionId?: number }
 ): Promise<IntentResult> {
  const addLiqMatch = content.match(STELDEX_ADD_LIQUIDITY_RE) ?? content.match(STELDEX_ADD_LIQUIDITY_ALT_RE);
- if (addLiqMatch) {
- const [, amountA, symbolA, amountB, symbolB] = addLiqMatch;
+ const addLiqOneSided = !addLiqMatch ? content.match(STELDEX_ADD_LIQUIDITY_ONE_SIDED_RE) : null;
+ const addLiqSingle = !addLiqMatch && !addLiqOneSided ? content.match(STELDEX_ADD_LIQUIDITY_SINGLE_RE) : null;
+
+ if (addLiqSingle) {
+  const [, amountA, symbolA] = addLiqSingle;
+  const key = pendingActionKey(publicKey, opts?.sessionId);
+  setPendingAction(key, {
+   kind: "add_liquidity",
+   amount: amountA!,
+   asset: symbolA!.toUpperCase(),
+   protocol: /\bsoroswap\b/i.test(content) ? "soroswap" : "steldex",
+   promptHint: `You want to add **${amountA} ${symbolA!.toUpperCase()}** to a liquidity pool.\n\nWhich second asset should pair with it?\n\nReply with an asset code, e.g. \`XLM\` or \`pUSDC\` — I'll keep **${amountA} ${symbolA!.toUpperCase()}** fixed and calculate the matching amount from the live pool ratio.`,
+  });
+  return { kind: "text", text: clarifyPrompt(getPendingAction(key)!) };
+ }
+
+ if (addLiqMatch || addLiqOneSided) {
+ const amountA = addLiqMatch
+  ? addLiqMatch[1]!
+  : (addLiqOneSided![1] || addLiqOneSided![4])!;
+ const symbolA = addLiqMatch
+  ? addLiqMatch[2]!
+  : (addLiqOneSided![2] || addLiqOneSided![5])!;
+ const amountB = addLiqMatch ? addLiqMatch[3]! : "AUTO";
+ const symbolB = addLiqMatch
+  ? addLiqMatch[4]!
+  : (addLiqOneSided![3] || addLiqOneSided![6])!;
+ const oneSided = isLpAutoAmount(amountB);
  const pool = await resolveSteldexPool(symbolA, symbolB);
  if (pool) {
  const a = normalizeSteldexSymbol(symbolA);
- const b = normalizeSteldexSymbol(symbolB);
- const amount0Raw = a === pool.symbol0 ? amountA! : amountB!;
- const amount1Raw = a === pool.symbol0 ? amountB! : amountA!;
+ const amount0Raw = a === pool.symbol0 ? amountA : oneSided ? "AUTO" : amountB;
+ const amount1Raw = a === pool.symbol0 ? (oneSided ? "AUTO" : amountB) : amountA;
+ const anchorSide: 0 | 1 | undefined = oneSided
+  ? a === pool.symbol0
+   ? 0
+   : 1
+  : undefined;
 
  const matched = await matchSteldexAddLiquidityAmounts({
  symbol0: pool.symbol0,
@@ -439,9 +523,16 @@ async function parseSteldexIntents(
  token1Contract: pool.token1Contract,
  amount0Max: amount0Raw,
  amount1Max: amount1Raw,
+ anchorSide,
  });
- const amount0 = matched?.amount0 ?? amount0Raw;
- const amount1 = matched?.amount1 ?? amount1Raw;
+ const final0 = matched?.amount0 ?? (amount0Raw === "AUTO" ? null : amount0Raw);
+ const final1 = matched?.amount1 ?? (amount1Raw === "AUTO" ? null : amount1Raw);
+ if (!final0 || !final1) {
+  return {
+   kind: "text",
+   text: `Could not quote the ${pool.pair} pool ratio to size your LP. Try again in a moment, or give both amounts explicitly (e.g. \"add liquidity 100 ${symbolA} and 10 ${symbolB}\").`,
+  };
+ }
  const ratioNote = matched
  ? matched.adjusted
  ? ` ${matched.note}`
@@ -450,12 +541,12 @@ async function parseSteldexIntents(
 
  return {
  kind: "action",
- text: `Ready to add ${amount0} ${pool.symbol0} and ${amount1} ${pool.symbol1} to ${pool.pair} on StelDex (full-range).${ratioNote} Sign one step at a time with your connected wallet.`,
+ text: `Ready to add ${final0} ${pool.symbol0} and ${final1} ${pool.symbol1} to ${pool.pair} on StelDex (full-range).${ratioNote} Sign one step at a time with your connected wallet.`,
  action: {
  type: "steldex_add_liquidity",
  ...withFullRange(pool),
- sendAmount: amount0,
- amountB: amount1,
+ sendAmount: final0,
+ amountB: final1,
  sendAsset: pool.symbol0,
  destAsset: pool.symbol1,
  },
@@ -467,10 +558,17 @@ async function parseSteldexIntents(
  symbolA: symbolA!,
  symbolB: symbolB!,
  amountAMax: amountA!,
- amountBMax: amountB!,
+ amountBMax: oneSided ? "AUTO" : amountB!,
+ anchorSide: oneSided ? 0 : undefined,
  });
  const outA = matched?.amount0 ?? amountA!;
- const outB = matched?.amount1 ?? amountB!;
+ const outB = matched?.amount1;
+ if (oneSided && !outB) {
+  return {
+   kind: "text",
+   text: `Could not quote Soroswap ${symbolA}/${symbolB} to size your LP. Try giving both amounts explicitly.`,
+  };
+ }
  const ratioNote = matched
  ? matched.adjusted
  ? ` ${matched.note}`
@@ -479,11 +577,11 @@ async function parseSteldexIntents(
 
  return {
  kind: "action",
- text: `Soroswap add liquidity: ${outA} ${symbolA!.toUpperCase()} + ${outB} ${symbolB!.toUpperCase()}.${ratioNote} Sign with your connected wallet.`,
+ text: `Soroswap add liquidity: ${outA} ${symbolA!.toUpperCase()} + ${outB ?? amountB} ${symbolB!.toUpperCase()}.${ratioNote} Sign with your connected wallet.`,
  action: {
  type: "soroswap_add_liquidity",
  sendAmount: outA,
- amountB: outB,
+ amountB: outB ?? amountB!,
  sendAsset: symbolA!.toUpperCase(),
  destAsset: symbolB!.toUpperCase(),
  pair: `${symbolA!.toUpperCase()}/${symbolB!.toUpperCase()}`,
@@ -845,11 +943,258 @@ async function getDeterministicResponse(
  );
  }
  // Short numeric / clarify-looking replies that didn't match - re-prompt
- if (/^#?\d+\.?$/.test(content.trim()) || /^(the\s+)?(epl|fa\s*cup|premier)/i.test(content.trim())) {
+ if (/^(the\s+)?(epl|fa\s*cup|premier)/i.test(content.trim())) {
  return {
  text: formatAmbiguousMarkets(pending.markets),
  action: null,
  };
+ }
+ const numOnly = content.trim().match(/^#?(\d+)\.?$/);
+ if (numOnly) {
+ const n = Number(numOnly[1]);
+ if (n >= 1 && n <= pending.markets.length) {
+ return {
+ text: formatAmbiguousMarkets(pending.markets),
+ action: null,
+ };
+ }
+ // Larger numbers (e.g. "50") may be an amount for a pending swap — fall through
+ }
+ }
+ }
+
+ // Follow-up after amount / LP-pair clarify: "50", "50 XLM", "xlm"
+ {
+ const key = pendingActionKey(publicKey, sessionId);
+ const pendingAct = getPendingAction(key);
+ if (pendingAct) {
+ if (/^(cancel|nevermind|never\s*mind|stop|no)\s*!?\s*$/i.test(content.trim())) {
+ clearPendingAction(key);
+ return { text: "Cancelled — tell me what you’d like to do next.", action: null };
+ }
+ if (pendingAct.kind === "add_liquidity") {
+  const assetReply = parseFollowUpAsset(content, pendingAct.asset);
+  if (assetReply) {
+   const synthetic = synthesizeLpIntentFromPending(pendingAct, assetReply);
+   if (synthetic) {
+    clearPendingAction(key);
+    return getDeterministicResponse(synthetic, publicKey, options);
+   }
+  }
+  // "50 XLM" as second side with explicit amount → two-sided LP
+  const amtReply = parseFollowUpAmount(content);
+  if (amtReply?.assetHint && pendingAct.amount && pendingAct.asset) {
+   clearPendingAction(key);
+   const synthetic = `add liquidity ${pendingAct.amount} ${pendingAct.asset} and ${amtReply.amount} ${amtReply.assetHint} on ${pendingAct.protocol || "steldex"}`;
+   return getDeterministicResponse(synthetic, publicKey, options);
+  }
+  if (content.trim().split(/\s+/).length <= 6) {
+   return {
+    text: `${clarifyPrompt(pendingAct)}\n\n(Reply with an asset like **XLM**, or say **cancel**.)`,
+    action: null,
+   };
+  }
+  clearPendingAction(key);
+ } else {
+ const parsed = parseFollowUpAmount(content);
+ if (parsed) {
+ const synthetic = synthesizeIntentFromPending(
+ pendingAct,
+ parsed.amount,
+ parsed.assetHint
+ );
+ if (synthetic) {
+ clearPendingAction(key);
+ return getDeterministicResponse(synthetic, publicKey, options);
+ }
+ }
+ // Short replies that aren't amounts → re-ask; long new intents clear pending
+ if (content.trim().split(/\s+/).length <= 6) {
+ return {
+ text: `${clarifyPrompt(pendingAct)}\n\n(I still need a number to continue — or say **cancel**.)`,
+ action: null,
+ };
+ }
+ clearPendingAction(key);
+ }
+ }
+ }
+
+ // Multi-turn NFT collection create wizard
+ {
+ const draftKey = nftCollectionDraftKey(publicKey, sessionId);
+ const draft = getNftCollectionDraft(draftKey);
+ if (draft) {
+ if (isCancelWizard(content)) {
+ clearNftCollectionDraft(draftKey);
+ return { text: "Cancelled collection setup — say when you want to start again.", action: null };
+ }
+ // Starting a new collection replaces the draft (handled below via regex)
+ if (!NFT_CREATE_COLLECTION_RE.test(content)) {
+ if (draft.step === "awaiting_details") {
+ const details = parseDetailsReply(content);
+ const supplyInReply = content.match(
+ /\b(?:total\s+supply|max(?:\s+supply)?|supply|ts)\s*(?:is|=|:)?\s*(\d+)\b/i
+ );
+ const unlimited = /\b(?:unlimited|no\s+max)\b/i.test(content);
+ let supplySpecified = draft.supplySpecified;
+ let maxSupply = draft.maxSupply;
+ if (unlimited) {
+ supplySpecified = true;
+ maxSupply = 0;
+ } else if (supplyInReply?.[1]) {
+ supplySpecified = true;
+ maxSupply = Math.max(0, parseInt(supplyInReply[1], 10) || 0);
+ }
+ if (!details.description || details.description.length < 8) {
+ return {
+ text: `${askForCollectionDetails(draft)}\n\n(Need a bit more detail — at least a short description.)`,
+ action: null,
+ };
+ }
+ const next = {
+ ...draft,
+ description: details.description,
+ traits: details.traits ?? draft.traits,
+ website: details.website ?? draft.website,
+ royaltyBps: details.royaltyBps ?? draft.royaltyBps,
+ supplySpecified,
+ maxSupply,
+ step: "awaiting_media" as const,
+ };
+ setNftCollectionDraft(draftKey, next);
+ return { text: askForCollectionMedia(next), action: null };
+ }
+
+ if (draft.step === "awaiting_media") {
+ const imageUrl = extractImageUrl(content);
+ const preferUpload = isUploadIntent(content);
+ if (!imageUrl && !preferUpload) {
+ return {
+ text: `${askForCollectionMedia(draft)}\n\n(Paste a URL or say **upload**.)`,
+ action: null,
+ };
+ }
+ clearNftCollectionDraft(draftKey);
+ const traitsNote = draft.traits
+ ? `\nTraits / rarity: ${draft.traits}`
+ : "";
+ return {
+ text: [
+ `All set — **${draft.name}** (${draft.symbol}) is ready to deploy.`,
+ draft.description ? `Description: ${draft.description}` : null,
+ `Max supply: ${draft.supplySpecified ? (draft.maxSupply === 0 ? "unlimited" : draft.maxSupply) : "not set (use the card)"}.`,
+ `Royalty: ${(draft.royaltyBps / 100).toFixed(2)}% · Orbit fee: 0.5%.`,
+ preferUpload
+ ? "Attach your artwork on the card, review, then sign."
+ : "Review the card and sign to create the collection.",
+ ].filter(Boolean).join("\n"),
+ action: {
+ type: "nft_create_collection",
+ marketHint: `${draft.name} (${draft.symbol})`,
+ sendAsset: draft.symbol,
+ description: draft.description
+ ? `${draft.description}${traitsNote}`
+ : undefined,
+ imageUrl: imageUrl || undefined,
+ website: draft.website,
+ maxSupply: draft.maxSupply,
+ royaltyBps: draft.royaltyBps,
+ supplySpecified: draft.supplySpecified,
+ } as ChatAction,
+ };
+ }
+ }
+ }
+ }
+
+ // Incomplete tx intents (no amount) → ask for the figure before LLM can digress
+ {
+ const key = pendingActionKey(publicKey, sessionId);
+ const hasLeadingAmount =
+ /\b(?:swap|exchange|convert|send|transfer|pay|supply|lend|deposit|withdraw|borrow|repay)\s+[\d.]+/i.test(
+ content
+ );
+
+ if (!hasLeadingAmount && !SWAP_INTENT_RE.test(content) && !SEND_INTENT_RE.test(content)) {
+ const swapPair = content.match(INCOMPLETE_SWAP_PAIR_RE);
+ if (swapPair) {
+ setPendingAction(key, {
+ kind: "swap",
+ fromAsset: swapPair[1]!.toUpperCase(),
+ toAsset: swapPair[2]!.toUpperCase(),
+ });
+ return { text: clarifyPrompt(getPendingAction(key)!), action: null };
+ }
+
+ const swapDest = content.match(INCOMPLETE_SWAP_DEST_RE);
+ if (swapDest) {
+ setPendingAction(key, {
+ kind: "swap",
+ fromAsset: "XLM",
+ toAsset: swapDest[1]!.toUpperCase(),
+ });
+ return { text: clarifyPrompt(getPendingAction(key)!), action: null };
+ }
+
+ const sendInc = content.match(INCOMPLETE_SEND_RE);
+ if (sendInc) {
+ setPendingAction(key, {
+ kind: "send",
+ asset: sendInc[1]!.toUpperCase(),
+ destination: sendInc[2]!,
+ });
+ return { text: clarifyPrompt(getPendingAction(key)!), action: null };
+ }
+
+ const depInc = content.match(INCOMPLETE_DEPOSIT_RE);
+ if (depInc) {
+ setPendingAction(key, {
+ kind: "deposit",
+ asset: depInc[1]!.toUpperCase(),
+ protocol: (depInc[2] || "defindex").replace(/\s+/g, "-").toLowerCase(),
+ });
+ return { text: clarifyPrompt(getPendingAction(key)!), action: null };
+ }
+
+ const wdInc = content.match(INCOMPLETE_WITHDRAW_RE);
+ if (wdInc) {
+ setPendingAction(key, {
+ kind: "withdraw",
+ asset: wdInc[1]!.toUpperCase(),
+ protocol: (wdInc[2] || "defindex").replace(/\s+/g, "-").toLowerCase(),
+ });
+ return { text: clarifyPrompt(getPendingAction(key)!), action: null };
+ }
+
+ const supplyInc = content.match(INCOMPLETE_SUPPLY_RE);
+ if (supplyInc && /\bblend\b/i.test(content)) {
+ setPendingAction(key, {
+ kind: "supply",
+ asset: supplyInc[1]!.toUpperCase(),
+ protocol: "blend",
+ });
+ return { text: clarifyPrompt(getPendingAction(key)!), action: null };
+ }
+
+ const borrowInc = content.match(INCOMPLETE_BORROW_RE);
+ if (borrowInc && !/\bborrow\s+[\d.]/i.test(content)) {
+ setPendingAction(key, {
+ kind: "borrow",
+ asset: borrowInc[1]!.toUpperCase(),
+ protocol: "blend",
+ });
+ return { text: clarifyPrompt(getPendingAction(key)!), action: null };
+ }
+
+ const repayInc = content.match(INCOMPLETE_REPAY_RE);
+ if (repayInc && !/\brepay\s+[\d.]/i.test(content)) {
+ setPendingAction(key, {
+ kind: "repay",
+ asset: repayInc[1]!.toUpperCase(),
+ protocol: "blend",
+ });
+ return { text: clarifyPrompt(getPendingAction(key)!), action: null };
  }
  }
  }
@@ -864,7 +1209,7 @@ async function getDeterministicResponse(
  for (const to of multi.toAssets) {
  const synthetic = `swap ${multi.amount} ${multi.fromAsset} to ${to}`;
  try {
- const steldex = await parseSteldexIntents(synthetic, publicKey);
+ const steldex = await parseSteldexIntents(synthetic, publicKey, { sessionId });
  if (steldex.kind === "action") {
  const gated = await wrapActionWithTrustlineIfNeeded(publicKey, steldex.action);
  actions.push(gated.action as ChatAction);
@@ -958,7 +1303,7 @@ async function getDeterministicResponse(
 
  // StelDex write intents (read positions first where required)
  try {
- const steldex = await parseSteldexIntents(content, publicKey);
+ const steldex = await parseSteldexIntents(content, publicKey, { sessionId });
  if (steldex.kind === "action") {
  const gated = await wrapActionWithTrustlineIfNeeded(publicKey, steldex.action);
  return {
@@ -995,6 +1340,10 @@ async function getDeterministicResponse(
  if (action?.type === "swap") {
  const from = action.sendAsset!;
  const to = action.destAsset!;
+ const namedSoroswap = /\bsoroswap\b/i.test(content);
+ const namedVenue = /\b(?:soroswap|steldex|aquarius|phoenix|classic\s+dex|sdex)\b/i.test(
+ content
+ );
 
  if (soroswapConfigured() && (await isSoroswapPair(from, to)) && (await soroswapTestnetReady())) {
  try {
@@ -1016,10 +1365,12 @@ async function getDeterministicResponse(
  toTokenContract: toTok!.contract,
  };
  const gated = await wrapActionWithTrustlineIfNeeded(publicKey, swapAction);
+ const quiet =
+ `Prepared swap: ${action.sendAmount} ${from} → ~${preview.amountOutHuman} ${to}. Sign with your connected wallet.`;
+ const named =
+ `Soroswap route${route}: ${action.sendAmount} ${from} → ~${preview.amountOutHuman} ${to}.${impact} Sign with your connected wallet.`;
  return {
- text:
- gated.text ??
- `Soroswap route${route}: ${action.sendAmount} ${from} → ~${preview.amountOutHuman} ${to}.${impact} Sign with your connected wallet.`,
+ text: gated.text ?? (namedSoroswap || namedVenue ? named : quiet),
  action: gated.action as ChatAction,
  };
  }
@@ -1029,15 +1380,32 @@ async function getDeterministicResponse(
  }
 
  if (!SUPPORTED_ASSETS.includes(from) || !SUPPORTED_ASSETS.includes(to)) {
+ if (namedSoroswap) {
  return {
  text: `No live Soroswap path for ${from}/${to} on testnet right now. Classic DEX supports ${SUPPORTED_ASSETS.join(" / ")}; StelDex supports pUSDC, cUSDC, STELLAR, EURC.`,
  action: null,
  };
  }
-
  return {
- text: `No Soroswap liquidity for ${from}/${to} right now - using classic testnet DEX for ${action.sendAmount} ${from} → ${to}. Sign with your connected wallet.`,
- action: (await wrapActionWithTrustlineIfNeeded(publicKey, action)).action as ChatAction,
+ text: `I can't route ${from} → ${to} on testnet right now. Try XLM/USDC, or a StelDex pair like pUSDC / cUSDC / EURC.`,
+ action: null,
+ };
+ }
+
+ const gatedClassic = await wrapActionWithTrustlineIfNeeded(publicKey, action);
+ if (namedSoroswap) {
+ return {
+ text:
+ gatedClassic.text ??
+ `No Soroswap liquidity for ${from}/${to} right now - using classic testnet DEX for ${action.sendAmount} ${from} → ${to}. Sign with your connected wallet.`,
+ action: gatedClassic.action as ChatAction,
+ };
+ }
+ return {
+ text:
+ gatedClassic.text ??
+ `Prepared swap: ${action.sendAmount} ${from} → ${to}. Sign with your connected wallet.`,
+ action: gatedClassic.action as ChatAction,
  };
  }
 
@@ -1238,28 +1606,88 @@ async function getDeterministicResponse(
  if (createCollection) {
  if (!publicKey) return { text: AI_RESPONSES.connectWallet, action: null };
  try {
- const name = createCollection[1]?.trim() || "Orbit Collection";
- const symbol =
- createCollection[2]?.trim() ||
- name.replace(/[^A-Za-z0-9]/g, "").slice(0, 6).toUpperCase() ||
- "ORB";
- const maxSupply = createCollection[3] ? parseInt(createCollection[3], 10) : 0;
- const created = await prepareCreateCollection({
- walletAddress: publicKey,
- name,
- symbol,
- maxSupply: Number.isFinite(maxSupply) ? maxSupply : 0,
- openMint: true,
- });
+ const fields = parseCollectionPromptFields(content, createCollection);
+ const draftKey = nftCollectionDraftKey(publicKey, sessionId);
+
+ // Full one-shot prompt → action card immediately
+ if (collectionPromptComplete(fields)) {
+ clearNftCollectionDraft(draftKey);
  return {
- text: created.message,
+ text: [
+ `Ready to create **${fields.name}** (${fields.symbol}).`,
+ `Max supply: ${fields.maxSupply === 0 ? "unlimited" : fields.maxSupply}.`,
+ `Royalty: ${(fields.royaltyBps / 100).toFixed(2)}% · Orbit fee: 0.5%.`,
+ "Review the card and sign to deploy.",
+ ].join("\n"),
  action: {
  type: "nft_create_collection",
- marketHint: `${created.name} (${created.symbol})`,
- sendAsset: created.symbol,
- xdr: created.xdr,
- networkPassphrase: created.networkPassphrase,
+ marketHint: `${fields.name} (${fields.symbol})`,
+ sendAsset: fields.symbol,
+ description: fields.description,
+ imageUrl: fields.image,
+ website: fields.website,
+ maxSupply: fields.maxSupply,
+ royaltyBps: fields.royaltyBps,
+ supplySpecified: true,
  } as ChatAction,
+ };
+ }
+
+ // Guided multi-turn: name/supply first → ask description → ask media → card
+ const hasDetails = Boolean(fields.description?.trim());
+ const hasMedia = Boolean(fields.image?.trim());
+ if (hasDetails && !hasMedia) {
+ setNftCollectionDraft(draftKey, {
+ name: fields.name,
+ symbol: fields.symbol,
+ maxSupply: fields.maxSupply,
+ supplySpecified: fields.supplySpecified,
+ royaltyBps: fields.royaltyBps,
+ description: fields.description,
+ website: fields.website,
+ step: "awaiting_media",
+ });
+ return {
+ text: askForCollectionMedia({
+ name: fields.name,
+ symbol: fields.symbol,
+ maxSupply: fields.maxSupply,
+ supplySpecified: fields.supplySpecified,
+ royaltyBps: fields.royaltyBps,
+ description: fields.description,
+ website: fields.website,
+ step: "awaiting_media",
+ createdAt: Date.now(),
+ }),
+ action: null,
+ };
+ }
+
+ setNftCollectionDraft(draftKey, {
+ name: fields.name,
+ symbol: fields.symbol,
+ maxSupply: fields.maxSupply,
+ supplySpecified: fields.supplySpecified,
+ royaltyBps: fields.royaltyBps,
+ description: fields.description,
+ website: fields.website,
+ imageUrl: fields.image,
+ step: "awaiting_details",
+ });
+ return {
+ text: askForCollectionDetails({
+ name: fields.name,
+ symbol: fields.symbol,
+ maxSupply: fields.maxSupply,
+ supplySpecified: fields.supplySpecified,
+ royaltyBps: fields.royaltyBps,
+ description: fields.description,
+ website: fields.website,
+ imageUrl: fields.image,
+ step: "awaiting_details",
+ createdAt: Date.now(),
+ }),
+ action: null,
  };
  } catch (err: any) {
  return { text: err?.message ?? "Create collection failed", action: null };
@@ -1271,15 +1699,24 @@ async function getDeterministicResponse(
  if (!publicKey) return { text: AI_RESPONSES.connectWallet, action: null };
  try {
  const supply = content.match(/\b(?:supply|amount)\s+([\d.]+)/i)?.[1];
- const tokenName = content.match(/\b(?:named|name)\s+["']([^"']+)["']/i)?.[1];
- const description = content.match(/\bdescription\s+["']([^"']+)["']/i)?.[1];
+ const tokenName = content.match(
+ /\b(?:named|name)\s+["']([^"']+)["']/i
+ )?.[1];
+ const description = content.match(
+ /\bdescription\s+["']([^"']+)["']/i
+ )?.[1];
  const image = content.match(/\bimage\s+(https?:\/\/\S+)/i)?.[1];
  const website = content.match(/\bwebsite\s+(https?:\/\/\S+)/i)?.[1];
  const launched = await prepareTokenLaunch({
  walletAddress: publicKey,
  code: tokenLaunch[1],
  amount: supply ?? tokenLaunch[2],
- metadata: { name: tokenName, description, image, website },
+ metadata: {
+ name: tokenName,
+ description,
+ image,
+ website,
+ },
  });
  if (!launched.xdr) {
  return { text: launched.message, action: null };
@@ -2046,40 +2483,35 @@ async function getDeterministicResponse(
  }
  }
 
- // Soroswap faucet (docs: POST /api/faucet)
+ // Faucet / get test tokens — XLM via Friendbot; other assets via swap (wallets already get XLM)
  const faucetMatch = content.match(FAUCET_RE);
  if (faucetMatch) {
  if (!publicKey) return { text: AI_RESPONSES.connectWallet, action: null };
- if (!soroswapConfigured()) {
- return { text: "Soroswap faucet needs SOROSWAP_API_KEY in .env.", action: null };
- }
  const symbol = (faucetMatch[1] || faucetMatch[2] || "").toUpperCase();
  if (!symbol) {
- return { text: "Specify a token to mint, e.g. \"faucet USDC\".", action: null };
+ return { text: "Specify a token, e.g. \"faucet USDC\" or \"faucet XLM\".", action: null };
  }
- try {
- const token = await resolveSoroswapToken(symbol);
- if (!token) {
+
+ if (symbol === "XLM") {
+ const result = await fundWithFriendbot(publicKey);
  return {
- text: `Unknown Soroswap testnet token "${symbol}". Try USDC, AQUA, or XLM.`,
+ text: result.success
+ ? `${result.message} You can swap some of that XLM for USDC next — say \"swap 50 XLM to USDC\".`
+ : result.message,
  action: null,
  };
  }
- await faucetSoroswapToken(publicKey, token.contract);
- const tip =
- symbol === "USDC"
- ? " This is Circle testnet USDC - usable for Blend supply, Orbit Perps, and StelDex (as cUSDC)."
- : "";
- return {
- text: `Minted testnet ${symbol} to your wallet via the Soroswap faucet (${token.contract.slice(0, 8)}…). Check balances in a moment.${tip}`,
- action: null,
- };
- } catch (err: any) {
- return {
- text: `Faucet failed: ${err?.message ?? "unknown error"}. You can also mint at https://testnet.soroswap.finance while on Testnet.`,
- action: null,
- };
- }
+
+ // Non-XLM: ask how much XLM to swap (Friendbot already runs on wallet create)
+ const key = pendingActionKey(publicKey, sessionId);
+ const dest = symbol === "CUSDC" ? "USDC" : symbol;
+ setPendingAction(key, {
+ kind: "swap",
+ fromAsset: "XLM",
+ toAsset: dest,
+ promptHint: `Wallets are already funded with testnet **XLM** via Friendbot when you connect — no need to fund again.\n\nTo get **${dest}**, I’ll prepare an **XLM → ${dest}** swap.\n\nHow many **XLM** do you want to swap to **${dest}**?\n\nReply with an amount, e.g. \`50\` or \`50 XLM\` (or say **cancel**).`,
+ });
+ return { text: clarifyPrompt(getPendingAction(key)!), action: null };
  }
 
  if (lower.includes("soroswap") || lower.includes("phoenix") || lower.includes("aggregator")) {
@@ -2281,18 +2713,29 @@ async function getAiResponse(
  if (actionPass.action || actionPass.actions?.length || actionPass.gallery) {
  return actionPass;
  }
- // Clarification / list text from deterministic path (e.g. ambiguous markets)
+ // Clarification / list text from deterministic path (e.g. ambiguous markets, LP pair ask)
  if (
  actionPass.text &&
  actionPass.text !== AI_RESPONSES.default &&
  !isGenericReply(actionPass.text)
  ) {
- // Allow deterministic text-only replies for predict clarify / list / errors
+ // Allow deterministic text-only replies for predict clarify / LP pair / list / errors
  const looksLikeActionText =
- /several markets match|orbit predict|no market matched|prepared \d+ swaps|on-chain prediction/i.test(
+ /several markets match|orbit predict|no market matched|prepared \d+ swaps|on-chain prediction|how many|reply with an amount|still need a number|i’ll prepare an|i'll prepare an|wallets are already funded|second asset|pair with|reply with an asset|liquidity pool|matching amount from the (?:live )?pool|got it —|collection description|add \*\*collection artwork\*\*|paste an image url|say \*\*upload\*\*|cancelled collection setup|all set —/i.test(
  actionPass.text
  ) || actionPass.pendingPredict;
- if (looksLikeActionText) return actionPass;
+ // LP pair clarify / NFT collection wizard — never let the LLM override
+ const pendingLp = getPendingAction(pendingActionKey(publicKey, opts?.sessionId));
+ const pendingNft = getNftCollectionDraft(
+ nftCollectionDraftKey(publicKey, opts?.sessionId)
+ );
+ if (
+ looksLikeActionText ||
+ pendingLp?.kind === "add_liquidity" ||
+ pendingNft
+ ) {
+ return actionPass;
+ }
  }
 
  // 1.25) Live Blend health for connected wallets

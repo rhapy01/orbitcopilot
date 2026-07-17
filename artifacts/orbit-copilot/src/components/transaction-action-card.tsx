@@ -3,6 +3,7 @@ import {
  ArrowRight,
  CheckCircle2,
  ExternalLink,
+ ImagePlus,
  Loader2,
  Sprout,
  Wallet,
@@ -146,12 +147,64 @@ export interface ChatAction {
  description?: string;
  imageUrl?: string;
  website?: string;
+ /** Local file as base64 data URL (preferred over imageUrl when set). */
+ imageDataUrl?: string;
+ animationDataUrl?: string;
+ bannerImageDataUrl?: string;
+ maxSupply?: number;
+ royaltyBps?: number;
+ /** User explicitly set max supply (including 0 = unlimited). */
+ supplySpecified?: boolean;
  priceXlm?: string;
  markPriceStale?: boolean;
  xdr?: string;
  networkPassphrase?: string;
  /** For add_trustline: the swap action to auto-execute after trustline is added */
  pendingAction?: ChatAction;
+}
+
+const MEDIA_MAX_BYTES = 8 * 1024 * 1024;
+
+function needsMediaAttach(action: ChatAction): boolean {
+ if (action.type === "nft_mint" && isBetaNftMintAction(action)) return false;
+ return (
+ action.type === "nft_mint" ||
+ action.type === "nft_create_collection" ||
+ action.type === "token_deploy"
+ );
+}
+
+function fileToDataUrl(file: File): Promise<string> {
+ return new Promise((resolve, reject) => {
+ const reader = new FileReader();
+ reader.onload = () => {
+ if (typeof reader.result === "string") resolve(reader.result);
+ else reject(new Error("Could not read file"));
+ };
+ reader.onerror = () => reject(new Error("Could not read file"));
+ reader.readAsDataURL(file);
+ });
+}
+
+function mediaPreviewUrl(action: ChatAction): string | null {
+ return action.imageDataUrl || action.imageUrl || null;
+}
+
+function collectionSetupReady(action: ChatAction): boolean {
+ if (action.type !== "nft_create_collection") return true;
+ const hasDesc = Boolean(action.description?.trim());
+ const hasArt = Boolean(action.imageDataUrl || action.imageUrl?.trim());
+ const hasSupply = Boolean(action.supplySpecified);
+ return hasDesc && hasArt && hasSupply;
+}
+
+function collectionSetupMissing(action: ChatAction): string[] {
+ if (action.type !== "nft_create_collection") return [];
+ const missing: string[] = [];
+ if (!action.description?.trim()) missing.push("description");
+ if (!action.imageDataUrl && !action.imageUrl?.trim()) missing.push("artwork");
+ if (!action.supplySpecified) missing.push("max supply");
+ return missing;
 }
 
 type Status = "idle" | "building" | "signing" | "submitting" | "success" | "error";
@@ -250,6 +303,10 @@ async function rebuildOrbitNativeXdr(
  ...body,
  name: action.sendAsset ?? action.marketHint,
  metadataUri: action.metadataUri,
+ description: action.description,
+ image: action.imageUrl,
+ imageDataUrl: action.imageDataUrl,
+ animationDataUrl: action.animationDataUrl,
  };
  }
  break;
@@ -259,6 +316,14 @@ async function rebuildOrbitNativeXdr(
  ...body,
  name: action.marketHint?.replace(/\s*\([^)]*\)\s*$/, "").trim() || "Orbit Collection",
  symbol: action.sendAsset || "ORB",
+ description: action.description,
+ image: action.imageUrl,
+ imageDataUrl: action.imageDataUrl,
+ bannerImageDataUrl: action.bannerImageDataUrl,
+ externalUrl: action.website,
+ maxSupply: action.maxSupply ?? 0,
+ openMint: true,
+ royaltyBps: action.royaltyBps ?? 250,
  };
  break;
  case "nft_cancel":
@@ -293,6 +358,7 @@ async function rebuildOrbitNativeXdr(
  name: action.tokenName,
  description: action.description,
  image: action.imageUrl,
+ imageDataUrl: action.imageDataUrl,
  website: action.website,
  };
  break;
@@ -752,6 +818,9 @@ export function TransactionActionCard({
  );
  const [quoteLoading, setQuoteLoading] = useState(false);
  const [outcomeLine, setOutcomeLine] = useState<string | null>(null);
+ const [mediaBusy, setMediaBusy] = useState(false);
+ const [mediaError, setMediaError] = useState<string | null>(null);
+ const imageInputRef = useRef<HTMLInputElement>(null);
  const trackedStatus = useRef<Status>("idle");
  const betaClaimRecorded = useRef(false);
  const confidence = actionConfidence(action);
@@ -985,6 +1054,14 @@ export function TransactionActionCard({
 
  const handleExecute = async (opts?: { skipTooLateRetry?: boolean }) => {
  if (!publicKey) return;
+ if (action.type === "nft_create_collection" && !collectionSetupReady(action)) {
+ setError(
+ `Add ${collectionSetupMissing(action).join(", ")} before signing.`
+ );
+ // Stay idle so the setup form remains editable; surface message via status error branch.
+ setStatus("error");
+ return;
+ }
  setError(null);
  setProgress(null);
  setStepInfo(null);
@@ -1283,6 +1360,42 @@ export function TransactionActionCard({
 
  const isBusy = status === "building" || status === "signing" || status === "submitting";
 
+ const handleAttachImage = async (file: File | null) => {
+ if (!file) return;
+ setMediaError(null);
+ if (!file.type.startsWith("image/") && !file.type.startsWith("video/")) {
+ setMediaError("Choose an image or video file.");
+ return;
+ }
+ if (file.size > MEDIA_MAX_BYTES) {
+ setMediaError("File too large (max 8 MB).");
+ return;
+ }
+ setMediaBusy(true);
+ try {
+ const dataUrl = await fileToDataUrl(file);
+ setAction((prev) => ({
+ ...prev,
+ imageDataUrl: dataUrl,
+ imageUrl: undefined,
+ }));
+ } catch {
+ setMediaError("Could not read that file.");
+ } finally {
+ setMediaBusy(false);
+ if (imageInputRef.current) imageInputRef.current.value = "";
+ }
+ };
+
+ const clearAttachedImage = () => {
+ setMediaError(null);
+ setAction((prev) => ({
+ ...prev,
+ imageDataUrl: undefined,
+ imageUrl: undefined,
+ }));
+ };
+
  if (action.type === "add_trustline") {
  const asset = action.sendAsset ?? "token";
  return (
@@ -1549,6 +1662,11 @@ export function TransactionActionCard({
  <span className="font-medium text-foreground">{action.priceXlm} XLM</span>
  </div>
  )}
+ {(action.type === "nft_buy" || action.type === "nft_list") && (
+ <p className="text-[11px] text-muted-foreground leading-snug">
+ Secondary sale split: seller + creator royalty (default 2.5%) + 0.5% Orbit fee.
+ </p>
+ )}
  {action.destination && (
  <div className="flex justify-between">
  <span>To</span>
@@ -1558,6 +1676,182 @@ export function TransactionActionCard({
  </div>
  )}
  </>
+ )}
+ {needsMediaAttach(action) && !planComplete && status !== "success" && (
+ <div className="space-y-2 rounded-xl bg-muted/40 px-3 py-2.5 ring-1 ring-border/60">
+ {action.type === "nft_create_collection" && (
+ <div className="space-y-2 pb-2 border-b border-border/60">
+ <p className="text-[11px] font-medium text-foreground">Collection details</p>
+ <textarea
+ rows={2}
+ placeholder="Description (required)"
+ value={action.description ?? ""}
+ disabled={isBusy}
+ onChange={(e) =>
+ setAction((prev) => ({
+ ...prev,
+ description: e.target.value,
+ }))
+ }
+ className="w-full rounded-xl border bg-background px-2.5 py-1.5 text-[11px] text-foreground placeholder:text-muted-foreground disabled:opacity-50 resize-none"
+ />
+ <div className="grid grid-cols-2 gap-1.5">
+ <label className="space-y-0.5">
+ <span className="text-[10px] text-muted-foreground">Max supply</span>
+ <input
+ type="number"
+ min={0}
+ placeholder="0 = unlimited"
+ value={action.supplySpecified ? action.maxSupply ?? 0 : ""}
+ disabled={isBusy}
+ onChange={(e) => {
+ const raw = e.target.value;
+ if (raw === "") {
+ setAction((prev) => ({
+ ...prev,
+ supplySpecified: false,
+ maxSupply: 0,
+ }));
+ return;
+ }
+ const n = Math.max(0, Math.floor(Number(raw)) || 0);
+ setAction((prev) => ({
+ ...prev,
+ maxSupply: n,
+ supplySpecified: true,
+ }));
+ }}
+ className="w-full rounded-xl border bg-background px-2.5 py-1.5 text-[11px] text-foreground placeholder:text-muted-foreground disabled:opacity-50"
+ />
+ </label>
+ <label className="space-y-0.5">
+ <span className="text-[10px] text-muted-foreground">Royalty %</span>
+ <input
+ type="number"
+ min={0}
+ max={10}
+ step={0.1}
+ value={
+ action.royaltyBps != null
+ ? Number((action.royaltyBps / 100).toFixed(2))
+ : 2.5
+ }
+ disabled={isBusy}
+ onChange={(e) => {
+ const pct = Math.max(0, Math.min(10, Number(e.target.value) || 0));
+ setAction((prev) => ({
+ ...prev,
+ royaltyBps: Math.round(pct * 100),
+ }));
+ }}
+ className="w-full rounded-xl border bg-background px-2.5 py-1.5 text-[11px] text-foreground disabled:opacity-50"
+ />
+ </label>
+ </div>
+ <input
+ type="url"
+ placeholder="Website (optional)"
+ value={action.website ?? ""}
+ disabled={isBusy}
+ onChange={(e) =>
+ setAction((prev) => ({
+ ...prev,
+ website: e.target.value.trim() || undefined,
+ }))
+ }
+ className="w-full rounded-xl border bg-background px-2.5 py-1.5 text-[11px] text-foreground placeholder:text-muted-foreground disabled:opacity-50"
+ />
+ {!collectionSetupReady(action) && (
+ <p className="text-[11px] text-amber-700 dark:text-amber-400">
+ Still need: {collectionSetupMissing(action).join(", ")}
+ </p>
+ )}
+ </div>
+ )}
+ <div className="flex items-center justify-between gap-2">
+ <p className="text-[11px] font-medium text-foreground">
+ {action.type === "token_deploy"
+ ? "Token logo"
+ : action.type === "nft_create_collection"
+ ? "Collection image"
+ : "Artwork"}
+ </p>
+ {(action.imageDataUrl || action.imageUrl) && (
+ <button
+ type="button"
+ className="text-[11px] text-muted-foreground hover:text-foreground"
+ onClick={clearAttachedImage}
+ disabled={isBusy || mediaBusy}
+ >
+ Clear
+ </button>
+ )}
+ </div>
+ {mediaPreviewUrl(action) ? (
+ <div className="flex items-center gap-2.5">
+ {/* eslint-disable-next-line @next/next/no-img-element */}
+ <img
+ src={mediaPreviewUrl(action)!}
+ alt="Attached media"
+ className="h-12 w-12 rounded-lg object-cover ring-1 ring-border"
+ />
+ <p className="text-[11px] text-muted-foreground truncate min-w-0">
+ {action.imageDataUrl ? "Local file ready" : action.imageUrl}
+ </p>
+ </div>
+ ) : (
+ <p className="text-[11px] text-muted-foreground">
+ Attach from your computer or paste an image URL.
+ </p>
+ )}
+ <div className="flex flex-col gap-1.5">
+ <input
+ ref={imageInputRef}
+ type="file"
+ accept="image/*,video/mp4,video/webm"
+ className="hidden"
+ onChange={(e) => void handleAttachImage(e.target.files?.[0] ?? null)}
+ />
+ <Button
+ type="button"
+ size="sm"
+ variant="outline"
+ className="w-full rounded-xl"
+ disabled={isBusy || mediaBusy}
+ onClick={() => imageInputRef.current?.click()}
+ >
+ {mediaBusy ? (
+ <>
+ <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+ Reading…
+ </>
+ ) : (
+ <>
+ <ImagePlus className="w-3.5 h-3.5 mr-1.5" />
+ {action.imageDataUrl ? "Replace file" : "Attach from computer"}
+ </>
+ )}
+ </Button>
+ <input
+ type="url"
+ placeholder="https://… image URL"
+ value={action.imageDataUrl ? "" : action.imageUrl ?? ""}
+ disabled={isBusy || mediaBusy || Boolean(action.imageDataUrl)}
+ onChange={(e) => {
+ const v = e.target.value.trim();
+ setAction((prev) => ({
+ ...prev,
+ imageUrl: v || undefined,
+ imageDataUrl: undefined,
+ }));
+ }}
+ className="w-full rounded-xl border bg-background px-2.5 py-1.5 text-[11px] text-foreground placeholder:text-muted-foreground disabled:opacity-50"
+ />
+ </div>
+ {mediaError && (
+ <p className="text-[11px] text-destructive">{mediaError}</p>
+ )}
+ </div>
  )}
  {action.type === "perp_open" && (
  <>
@@ -1737,7 +2031,11 @@ export function TransactionActionCard({
  size="sm"
  className="w-full rounded-xl bg-orbit-gradient text-white border-0 hover:opacity-90"
  onClick={() => void handleExecute()}
- disabled={isBusy}
+ disabled={
+ isBusy ||
+ mediaBusy ||
+ (action.type === "nft_create_collection" && !collectionSetupReady(action))
+ }
  >
  {isBusy && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
  {status === "building"
@@ -1746,6 +2044,8 @@ export function TransactionActionCard({
  ? `${stepInfo ? `Step ${stepInfo.current}/${stepInfo.total}: ` : ""}${progress ?? (walletType === "internal" ? "Signing…" : "Confirm in Freighter…")}`
  : status === "submitting"
  ? progress ?? "Submitting…"
+ : action.type === "nft_create_collection" && !collectionSetupReady(action)
+ ? "Complete collection details"
  : walletType === "internal"
  ? "Sign with Orbit wallet"
  : "Sign with Freighter"}

@@ -20,6 +20,159 @@ import {
 } from "./nft-metadata";
 import { storeNftMedia } from "./nft-media";
 
+/** 0.5% Orbit platform fee on secondary NFT sales. */
+export const NFT_PLATFORM_FEE_BPS = 50;
+/** 2.5% default creator royalty (max 10% = 1000 bps). */
+export const NFT_DEFAULT_ROYALTY_BPS = 250;
+export const NFT_MAX_ROYALTY_BPS = 1000;
+
+function clampRoyaltyBps(raw?: number): number {
+  if (raw == null || !Number.isFinite(raw)) return NFT_DEFAULT_ROYALTY_BPS;
+  return Math.max(0, Math.min(NFT_MAX_ROYALTY_BPS, Math.floor(raw)));
+}
+
+/** Parse "royalty 5%" / "royalty 2.5" from chat into basis points. */
+export function parseRoyaltyBpsFromText(content: string): number | undefined {
+  const m = content.match(/\broyalty\s+(\d+(?:\.\d+)?)\s*%?/i);
+  if (!m?.[1]) return undefined;
+  const pct = parseFloat(m[1]);
+  if (!Number.isFinite(pct)) return undefined;
+  // Values > 10 without % are treated as bps if > 10 and <= 1000, else as percent.
+  if (pct > 10 && pct <= NFT_MAX_ROYALTY_BPS && !/%/.test(m[0])) {
+    return clampRoyaltyBps(pct);
+  }
+  return clampRoyaltyBps(Math.round(pct * 100));
+}
+
+/** Fields parsed from a create-collection chat prompt. */
+export type CollectionPromptFields = {
+  name: string;
+  symbol: string;
+  maxSupply: number;
+  royaltyBps: number;
+  description?: string;
+  image?: string;
+  website?: string;
+  /** True when chat included an explicit max/supply number. */
+  supplySpecified: boolean;
+};
+
+export function parseCollectionPromptFields(
+  content: string,
+  match: RegExpMatchArray
+): CollectionPromptFields {
+  let name = (match[1]?.trim() || "").replace(/,\s*$/, "").trim();
+  if (!name) {
+    // Fallback: words after "collection" until a keyword / comma clause
+    const after = content.match(
+      /\bcollection\b\s+(?:called|named\s+)?["']?(.+?)(?=\s*(?:,|\s)+(?:symbol|max|total|supply|ts|royalty|description|image|website|banner)\b|\s*$)/i
+    );
+    name = after?.[1]?.trim().replace(/,\s*$/, "") || "Orbit Collection";
+  }
+  name = name
+    .replace(
+      /\s+(?:symbol|max(?:\s+supply)?|total\s+supply|supply|ts|royalty|description|image|website|banner)\b.*$/i,
+      ""
+    )
+    .replace(/,\s*$/, "")
+    .trim()
+    .slice(0, 64) || "Orbit Collection";
+
+  const symbolFromMatch = match[2]?.trim();
+  const symbol =
+    (symbolFromMatch || name.replace(/[^A-Za-z0-9]/g, "").slice(0, 6) || "ORB")
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "")
+      .slice(0, 12) || "ORB";
+
+  const supplyMatch = content.match(
+    /\b(?:total\s+supply|max(?:\s+supply)?|supply|ts)\s*(?:is|=|:)?\s*(\d+)\b/i
+  );
+  const unlimited = /\b(?:unlimited|no\s+max(?:\s+supply)?)\b/i.test(content);
+  const maxFromRe = match[3] ? parseInt(match[3], 10) : NaN;
+  const maxFromText = supplyMatch?.[1] ? parseInt(supplyMatch[1], 10) : NaN;
+  const supplySpecified =
+    unlimited || Number.isFinite(maxFromText) || Number.isFinite(maxFromRe);
+  const maxSupply = unlimited
+    ? 0
+    : Number.isFinite(maxFromText)
+      ? maxFromText
+      : Number.isFinite(maxFromRe)
+        ? maxFromRe
+        : 0;
+
+  const description =
+    content.match(/\bdescription\s+["']([^"']+)["']/i)?.[1]?.trim() ||
+    content.match(
+      /\bdescription\s+(.+?)(?=\s+(?:symbol|max|supply|royalty|image|website|banner)\b|$)/i
+    )?.[1]?.trim();
+  const image = content.match(/\bimage\s+(https?:\/\/\S+)/i)?.[1]?.trim();
+  const website = content.match(/\bwebsite\s+(https?:\/\/\S+)/i)?.[1]?.trim();
+  const royaltyBps = parseRoyaltyBpsFromText(content) ?? NFT_DEFAULT_ROYALTY_BPS;
+
+  return {
+    name,
+    symbol,
+    maxSupply: Math.max(0, maxSupply),
+    royaltyBps,
+    description: description || undefined,
+    image,
+    website,
+    supplySpecified,
+  };
+}
+
+/** True when a create prompt already has everything needed for the action card. */
+export function collectionPromptComplete(fields: CollectionPromptFields): boolean {
+  return Boolean(
+    fields.supplySpecified &&
+      fields.description?.trim() &&
+      fields.image?.trim()
+  );
+}
+
+export function collectionDraftMissing(fields: {
+  description?: string;
+  image?: string;
+  imageDataUrl?: string;
+  supplySpecified?: boolean;
+}): string[] {
+  const missing: string[] = [];
+  if (!fields.description?.trim()) missing.push("description");
+  if (!fields.image?.trim() && !fields.imageDataUrl) missing.push("artwork (image)");
+  if (!fields.supplySpecified) missing.push("max supply (0 = unlimited)");
+  return missing;
+}
+
+export function formatCreateCollectionDraftMessage(fields: CollectionPromptFields): string {
+  const missing = collectionDraftMissing({
+    description: fields.description,
+    image: fields.image,
+    supplySpecified: fields.supplySpecified,
+    maxSupply: fields.maxSupply,
+  });
+  const lines = [
+    `Set up SEP-50 collection "${fields.name}" (${fields.symbol}).`,
+    `Creator royalty ${(fields.royaltyBps / 100).toFixed(2)}% · Orbit platform fee ${(NFT_PLATFORM_FEE_BPS / 100).toFixed(2)}%.`,
+    fields.supplySpecified
+      ? `Max supply: ${fields.maxSupply === 0 ? "unlimited" : fields.maxSupply}.`
+      : null,
+    "",
+  ].filter((l) => l !== null) as string[];
+
+  if (missing.length) {
+    lines.push("Complete these on the card before signing:");
+    for (const m of missing) lines.push(`• ${m}`);
+    lines.push("");
+    lines.push(
+      'Full example: create NFT collection Foxes symbol FOX max 1000 royalty 5% description "Stellar fox PFP collection" image https://example.com/fox.png'
+    );
+  } else {
+    lines.push("Details look complete — review the card and sign to deploy.");
+  }
+  return lines.join("\n");
+}
+
 function toStroops(human: string): string {
  const [w, f = ""] = human.trim().split(".");
  const frac = (f + "0000000").slice(0, 7);
@@ -57,6 +210,8 @@ export async function prepareCreateCollection(input: {
  externalUrl?: string;
  maxSupply?: number;
  openMint?: boolean;
+ /** Creator royalty in basis points (100 = 1%). Default 250 = 2.5%. */
+ royaltyBps?: number;
 }) {
  const factoryId = requireNftFactoryContract();
  const { Address, nativeToScVal, xdr } = await import("@stellar/stellar-sdk");
@@ -81,6 +236,7 @@ export async function prepareCreateCollection(input: {
  });
  bannerImage = uploaded.url;
  }
+ const royaltyBps = clampRoyaltyBps(input.royaltyBps);
  const collectionMetadata = await storeNftMetadata({
  walletPublicKey: input.walletAddress,
  metadata: {
@@ -95,6 +251,8 @@ export async function prepareCreateCollection(input: {
  attributes: [
  { trait_type: "Symbol", value: symbol },
  { trait_type: "Standard", value: "SEP-50" },
+ { trait_type: "Creator royalty", value: `${(royaltyBps / 100).toFixed(2)}%` },
+ { trait_type: "Platform fee", value: `${(NFT_PLATFORM_FEE_BPS / 100).toFixed(2)}%` },
  ],
  },
  });
@@ -116,6 +274,7 @@ export async function prepareCreateCollection(input: {
  nativeToScVal(baseUri, { type: "string" }),
  nativeToScVal(maxSupply, { type: "u32" }),
  xdr.ScVal.scvBool(openMint),
+ nativeToScVal(royaltyBps, { type: "u32" }),
  ],
  });
 
@@ -125,12 +284,14 @@ export async function prepareCreateCollection(input: {
  symbol,
  maxSupply,
  openMint,
+ royaltyBps,
+ platformFeeBps: NFT_PLATFORM_FEE_BPS,
  factoryId,
  xdr: built.xdr,
  networkPassphrase: built.networkPassphrase,
  message: `Create SEP-50 NFT collection "${name}" (${symbol})${
  maxSupply ? ` max ${maxSupply}` : ""
- }. Sign to deploy your collection contract.`,
+ }. Secondary sales: ${(royaltyBps / 100).toFixed(2)}% creator royalty + ${(NFT_PLATFORM_FEE_BPS / 100).toFixed(2)}% Orbit fee. Sign to deploy.`,
  };
 }
 
@@ -263,7 +424,7 @@ export async function prepareNftList(input: {
  collectionContract: contractId,
  xdr: built.xdr,
  networkPassphrase: built.networkPassphrase,
- message: `List NFT #${input.tokenId} for ${input.priceXlm} XLM. Sign to list.`,
+ message: `List NFT #${input.tokenId} for ${input.priceXlm} XLM. On sale: ~${((10000 - NFT_DEFAULT_ROYALTY_BPS - NFT_PLATFORM_FEE_BPS) / 100).toFixed(2)}% to you, ${(NFT_DEFAULT_ROYALTY_BPS / 100).toFixed(2)}% creator royalty, ${(NFT_PLATFORM_FEE_BPS / 100).toFixed(2)}% Orbit (collection may vary). Sign to list.`,
  };
 }
 
@@ -317,7 +478,7 @@ export async function prepareNftBuy(input: {
  collectionContract: contractId,
  xdr: built.xdr,
  networkPassphrase: built.networkPassphrase,
- message: `Buy NFT #${input.tokenId} with XLM. Sign to purchase.`,
+ message: `Buy NFT #${input.tokenId} with XLM. Price covers seller + creator royalty + ${(NFT_PLATFORM_FEE_BPS / 100).toFixed(2)}% Orbit fee. Sign to purchase.`,
  };
 }
 
@@ -358,13 +519,16 @@ export async function formatNftCatalog(): Promise<string> {
  return [
  "Orbit NFT launchpad (SEP-50 + OpenSea-style metadata, Soroban testnet):",
  "",
- "• Create collection: \"create NFT collection Orbit Foxes symbol FOX\"",
+ "• Create collection (guided): \"create NFT collection The Clanners, total supply 1000\" → description → artwork → sign card",
+ "• Or one-shot: \"create NFT collection Foxes symbol FOX max 1000 royalty 5% description \\\"…\\\" image https://…\"",
  "• Mint with metadata: \"mint an NFT called Stellar Fox image https://… traits Background=Nebula\"",
  "• Beta reward: feedback (heart) → \"claim my beta NFT\"",
  "• List / buy / transfer: \"list NFT #1 for 5 XLM\" · \"buy NFT #1\" · \"transfer NFT #1 to G…\"",
  "• Cancel listing: \"cancel listing NFT #1\"",
  "• Holdings: \"view my NFTs\"",
  "",
+ `Secondary sales: ${(NFT_DEFAULT_ROYALTY_BPS / 100).toFixed(2)}% creator royalty (0–10%, set at create) + ${(NFT_PLATFORM_FEE_BPS / 100).toFixed(2)}% Orbit platform fee; rest to seller.`,
+ "Collection create is multi-turn by default; say cancel anytime during setup.",
  "Standard: SEP-50 (name/symbol/token_uri/approve/transfer) — Freighter-compatible.",
  id?.startsWith("C") ? `Default collection: ${id}` : "Deploy orbit-nft → ORBIT_NFT_CONTRACT_ID",
  factory?.startsWith("C")

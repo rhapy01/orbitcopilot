@@ -263,7 +263,7 @@ const TOOLS = [
  function: {
  name: "propose_action",
  description:
- "Propose one on-chain action card. Call multiple times in one turn for multi-action prompts (e.g. swap to A, B, C each = one propose_action per destination). For predict_bet, marketHint must be an exact slug from list_prediction_markets. Prefer exact amounts and asset codes. For add_liquidity, sendAmount/sendAsset is Token A and amountB/destAsset is Token B - both required.",
+ "Propose one on-chain action card. Call multiple times in one turn for multi-action prompts (e.g. swap to A, B, C each = one propose_action per destination). For predict_bet, marketHint must be an exact slug from list_prediction_markets. Prefer exact amounts and asset codes. For add_liquidity: sendAmount/sendAsset is the user-stated Token A; destAsset is Token B. If the user only gave one amount, set amountB to AUTO (Orbit sizes the other side from the live pool ratio — do NOT copy the same number onto both assets).",
  parameters: {
  type: "object",
  properties: {
@@ -295,16 +295,20 @@ const TOOLS = [
  "nft_list",
  "nft_buy",
  "nft_transfer",
+ "nft_cancel",
+ "nft_create_collection",
+ "token_deploy",
+ "token_mint",
  "orbit_supply_deposit",
  "orbit_supply_withdraw",
  "orbit_supply_claim",
  ],
  },
- sendAmount: { type: "string", description: "Amount of Token A (or the send/swap input amount)" },
- sendAsset: { type: "string", description: "Asset code for Token A (e.g. XLM, pUSDC, USDC)" },
+ sendAmount: { type: "string", description: "Amount of Token A (or the send/swap input amount). For one-sided LP, this is the amount the user named." },
+ sendAsset: { type: "string", description: "Asset code for Token A (e.g. XLM, pUSDC, USDC). Must match the asset the user amount applies to." },
  destAsset: { type: "string", description: "Asset code for Token B or swap output (e.g. pUSDC, XLM)" },
  destination: { type: "string" },
- amountB: { type: "string", description: "Amount of Token B for add_liquidity actions - REQUIRED for steldex_add_liquidity and soroswap_add_liquidity" },
+ amountB: { type: "string", description: "Amount of Token B for add_liquidity. Use AUTO when the user only specified one side (Orbit calculates from pool ratio). Never set amountB equal to sendAmount just because only one amount was given." },
  pair: { type: "string", description: "Pool pair string e.g. XLM/pUSDC" },
  liquidity: { type: "string" },
  marketHint: { type: "string", description: "Prediction market slug or perp symbol (btc, eth, xlm)" },
@@ -559,7 +563,15 @@ function actionSummary(action: Record<string, unknown>): string {
  const type = String(action.type ?? "action");
  const amount = action.sendAmount ? `${action.sendAmount} ` : "";
  const asset = action.sendAsset ?? "";
- const dest = action.destAsset ? ` → ${action.destAsset}` : "";
+ const isLp =
+  type === "steldex_add_liquidity" || type === "soroswap_add_liquidity";
+ const dest = action.destAsset
+  ? isLp
+   ? action.amountB
+    ? ` + ${action.amountB} ${action.destAsset}`
+    : ` + ${action.destAsset}`
+   : ` → ${action.destAsset}`
+  : "";
  const to = action.destination
  ? ` to ${String(action.destination).slice(0, 6)}…`
  : "";
@@ -593,7 +605,7 @@ export async function runLlmCopilot(
  "",
  "CRITICAL DeFi CONCEPTS - never confuse these three:",
  "1. STAKING (single asset): deposit one token to earn rewards. Example: stake BLND on Blend. No LP token needed.",
- "2. LIQUIDITY PROVISION: deposit TWO assets into a pool (e.g. 10 XLM + 10 pUSDC) to earn trading fees. You get LP tokens back. Action type: steldex_add_liquidity. Orbit autocorrects amounts to the live pool ratio (user numbers are max caps) - still pass both amounts from the user.",
+ "2. LIQUIDITY PROVISION: deposit TWO assets into a pool to earn trading fees (you get LP tokens back). Action type: steldex_add_liquidity. Users almost never know both amounts — Orbit auto-sizes from the live pool ratio. Rules: (a) amount + one asset, no pair (e.g. \"add 100 USDC to liquidity\") → ask ONLY which pair asset (XLM / pUSDC / etc). NEVER ask for a second amount. (b) amount + both assets (e.g. \"add 100 USDC and XLM\", \"supply 100 USDC + XLM\", \"100 USDC with XLM\") → propose_action with sendAmount/sendAsset = the stated amount+asset, destAsset = the other asset, amountB=AUTO. NEVER copy the same number onto both sides. (c) both amounts given → pass both as max caps (Orbit autocorrects to ratio).",
  "3. YIELD FARMING: take the LP tokens you received from liquidity provision and stake them in a farm to earn STELLAR rewards. This requires holding LP tokens first. Action type: steldex_stake.",
  "These are SEPARATE steps. A user cannot farm without first providing liquidity. If they ask to farm but have no LP, tell them to add liquidity first.",
  "",
@@ -604,10 +616,13 @@ export async function runLlmCopilot(
  "All balances → get_wallet_balances with NO asset → short bullet list.",
  "Full portfolio / LP / farms / lending / what's earning / rebalance → get_portfolio, get_earning_report, or get_rebalance_plan.",
  "Never call get_portfolio for a single-asset balance question.",
- "For on-chain actions (swap/LP/farm/lend/borrow/send/predict/perp/nft/orbit-supply) → call propose_action with exact amounts and asset codes.",
+  "For on-chain actions (swap/LP/farm/lend/borrow/send/predict/perp/nft/orbit-supply) → call propose_action with amounts and asset codes. For LP, amountB may be AUTO.",
+ "If the user wants a transaction but omitted the amount (e.g. \"swap XLM to USDC\", \"faucet USDC\", \"supply USDC on blend\"), ask how much to use — do NOT lecture about Friendbot. Friendbot already funds XLM on wallet create. For \"faucet USDC\" ask how many XLM to swap to USDC. Exception: for add_liquidity with a numeric amount but missing pair, ask only for the pair asset — never a second amount.",
+ "Never propose_action without a numeric sendAmount (LP amountB=AUTO is allowed).",
+ "When routing a swap, do NOT narrate venue fallbacks (\"Soroswap down, using classic DEX\") unless the user named that venue. Quiet default: \"Prepared swap: X → Y. Sign with your connected wallet.\"",
  "Explain / teach questions (what is DeFi, IL, CeFi vs DeFi, bridges, oracles, staking vs LP, Stellar concepts) → call search_knowledge or explain_concept first, then answer from the hits and cite Sources.",
  "Impermanent loss numbers → calculate_il. Health/LTV numbers → calculate_health_factor. Live Blend risk → get_blend_health. APR to APY → convert_apr_apy.",
- "Prediction: predict_bet / predict_claim with marketHint = exact slug. Call list_prediction_markets first for sports; if ambiguous (two Chelsea-Arsenal fixtures), ask which timeframe - never invent slugs. NFTs: nft_mint / nft_list / nft_buy / nft_transfer.",
+ "Prediction: predict_bet / predict_claim with marketHint = exact slug. Call list_prediction_markets first for sports; if ambiguous (two Chelsea-Arsenal fixtures), ask which timeframe - never invent slugs. NFTs (SEP-50): nft_create_collection is multi-turn (name/supply → description/rarity → media URL or upload → action card). Also nft_mint / nft_list / nft_buy / nft_transfer / nft_cancel. Tokens: token_deploy / token_mint (classic asset + SAC).",
  "Orbit Supply yield: orbit_supply_deposit (USDC/pUSDC/EURC), orbit_supply_claim for \"claim my yield\". Rate 10 XLM per 1M staked per 24h. Not the same as Blend.",
  "Blend: blend_supply/withdraw/borrow/repay on the live testnet pool (Circle USDC + XLM + CETES + TESOURO). Wallet USDC IS valid for Blend - do not ask users to convert. Claim with blend_claim.",
  "Multi-action: for \"swap 200 XLM to pUSDC, cUSDC, EURC each\", call propose_action three times (200 XLM each destination).",

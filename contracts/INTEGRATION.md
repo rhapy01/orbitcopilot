@@ -25,8 +25,10 @@ and **TypeScript callers** (API + frontend).
 | orbit-perps | `close_position` | `perp_close` | `api-server/src/lib/perps.ts` |
 | orbit-nft (SEP-50) | `mint` | `nft_mint` | `api-server/src/lib/nft.ts` |
 | orbit-nft | `buy` / `list_for_sale` / `cancel_listing` | `nft_buy` / `nft_list` / `nft_cancel` | `api-server/src/lib/nft.ts` |
+| orbit-nft | `sale_fees` / `set_royalty` / `configure_marketplace_fees` | secondary sale split (2.5% royalty + 0.5% Orbit) | `contracts/orbit-nft` |
 | orbit-nft | `name` / `symbol` / `token_uri` / `approve`… | SEP-50 reads | Freighter / wallets |
 | orbit-nft-factory | `create_collection` | `nft_create_collection` | `api-server/src/lib/nft.ts` |
+| orbit-nft-factory | `set_platform_fee` / `platform_fee_*` | Orbit 0.5% treasury lock-in | factory admin |
 | classic + SAC | `createStellarAssetContract` / `mint` | `token_deploy` / `token_mint` | `api-server/src/lib/token-launch.ts` |
 | orbit-supply | `supply` | `orbit_supply_deposit` | `api-server/src/lib/orbit-supply.ts` + `orbit-copilot/src/lib/contract.ts` |
 | orbit-supply | `withdraw` | `orbit_supply_withdraw` | same |

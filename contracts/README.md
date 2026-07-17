@@ -30,7 +30,12 @@ PERPS_ID=$(stellar contract deploy \
 
 ### Orbit NFT (SEP-50 collection + marketplace)
 
-Redeploy required after the SEP-50 upgrade (`initialize` now takes name/symbol/base_uri/max_supply/open_mint).
+Redeploy required after marketplace fee upgrade (`initialize` now takes royalty + platform fee args).
+
+Secondary sales split (on-chain in `buy`):
+- **0.5%** Orbit platform fee → `platform_fee_receiver`
+- **2.5%** default creator royalty (0–10%, set at create / `set_royalty`) → collection creator
+- **remainder** → seller
 
 ```bash
 cd contracts/orbit-nft && stellar contract build
@@ -41,6 +46,7 @@ NFT_ID=$(stellar contract deploy \
 
 # XLM SAC payment token on testnet
 XLM_SAC=CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC
+PLATFORM_FEE=$(stellar keys address orbit-admin)   # or dedicated Orbit treasury G…
 
 stellar contract invoke --id $NFT_ID --source orbit-admin --network testnet -- \
   initialize \
@@ -50,7 +56,8 @@ stellar contract invoke --id $NFT_ID --source orbit-admin --network testnet -- \
   --base_uri "https://orbitpilot.vercel.app/api/nft/meta/" \
   --payment_token $XLM_SAC \
   --max_supply 0 \
-  --open_mint true
+  --open_mint true \
+  --fees '{ "royalty_bps": 250, "royalty_receiver": "'"$(stellar keys address orbit-admin)"'", "platform_fee_bps": 50, "platform_fee_receiver": "'"$PLATFORM_FEE"'" }'
 ```
 
 ### Orbit NFT Factory (optional — anyone creates collections)
@@ -70,7 +77,9 @@ stellar contract invoke --id $FACTORY_ID --source orbit-admin --network testnet 
   initialize \
   --admin $(stellar keys address orbit-admin) \
   --wasm_hash $WASM_HASH \
-  --payment_token CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC
+  --payment_token CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC \
+  --platform_fee_receiver $PLATFORM_FEE \
+  --platform_fee_bps 50
 ```
 
 Env:
@@ -78,11 +87,12 @@ Env:
 ```env
 ORBIT_NFT_CONTRACT_ID=$NFT_ID
 ORBIT_NFT_FACTORY_CONTRACT_ID=$FACTORY_ID
+# ORBIT_NFT_PLATFORM_FEE_ADDRESS=$PLATFORM_FEE
 ```
 
 Chat:
 
-- `create NFT collection Orbit Foxes symbol FOX`
+- `create NFT collection Orbit Foxes symbol FOX royalty 5%`
 - `mint an NFT called Stellar Fox image https://… traits Background=Nebula`
 - `list NFT #1 for 5 XLM` · `buy NFT #1` · `cancel listing NFT #1`
 - `launch token FOOX supply 1000000` · `mint 50000 FOOX`

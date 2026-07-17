@@ -16,7 +16,7 @@ export const NFT_TRANSFER_RE =
 export const NFT_CANCEL_RE =
  /\bcancel\s+(?:listing\s+(?:for\s+)?)?nft\s+#?(\d+)\b|\bunlist\s+nft\s+#?(\d+)\b/i;
 export const NFT_CREATE_COLLECTION_RE =
- /\bcreate\s+(?:an?\s+)?(?:nft\s+)?collection\b(?:\s+(?:called|named)?\s*["']?([^"'\n]+?)["']?)?(?:\s+symbol\s+([A-Za-z0-9]{1,12}))?(?:\s+max\s+(\d+))?/i;
+ /\bcreate\s+(?:an?\s+)?(?:nft\s+)?collection\b(?:\s+(?:called|named)?\s*["']?([^"'\n]+?)["']?(?=\s*(?:,|\s)+(?:symbol|max|total|supply|ts|royalty|description|image|website|banner)\b|\s*$))?(?:\s+symbol\s+([A-Za-z0-9]{1,12}))?(?:\s+max(?:\s+supply)?\s+(\d+))?/i;
 export const NFT_CLAIM_BETA_RE =
  /\bclaim\s+(?:my\s+)?(?:orbit\s+)?beta\s+(?:tester\s+)?nft\b|\bclaim\s+(?:my\s+)?feedback\s+nft\b|\bi\s+have\s+submitted\s+my\s+feedback[,\s]+mint\s+my\s+beta\s+tester\s+nft\b|\bmint\s+my\s+beta\s+tester\s+nft\b/i;
 /** Launch fungible token (classic + SAC). Avoid colliding with "mint NFT". */

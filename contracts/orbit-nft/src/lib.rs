@@ -4,16 +4,50 @@
 //! Implements the [SEP-50](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0050.md)
 //! NonFungibleToken surface so wallets/marketplaces can read name/symbol/token_uri,
 //! ownership, transfers, and approvals. Marketplace (list/buy) is an Orbit extension.
+//!
+//! Secondary sales (`buy`) split list price:
+//! - platform fee (default 0.5%) → Orbit treasury
+//! - creator royalty (default 2.5%, max 10%) → collection royalty receiver
+//! - remainder → seller
 
 use soroban_sdk::{
     contract, contractimpl, contracttype, symbol_short, token, Address, Env, String, Symbol, Vec,
 };
+
+/// 0.5% Orbit platform fee on secondary sales.
+pub const DEFAULT_PLATFORM_FEE_BPS: u32 = 50;
+/// 2.5% default creator royalty on secondary sales.
+pub const DEFAULT_ROYALTY_BPS: u32 = 250;
+/// Cap creator royalty at 10% (OpenSea-style).
+pub const MAX_ROYALTY_BPS: u32 = 1000;
+/// Hard cap platform fee at 5% (safety if misconfigured).
+pub const MAX_PLATFORM_FEE_BPS: u32 = 500;
 
 #[contracttype]
 #[derive(Clone)]
 pub struct Listing {
     pub seller: Address,
     pub price: i128,
+}
+
+/// Sale proceeds / fee configuration (basis points: 10_000 = 100%).
+#[contracttype]
+#[derive(Clone)]
+pub struct MarketplaceFeeConfig {
+    pub royalty_bps: u32,
+    pub royalty_receiver: Address,
+    pub platform_fee_bps: u32,
+    pub platform_fee_receiver: Address,
+}
+
+/// Sale proceeds breakdown (basis points use 10_000 = 100%).
+#[contracttype]
+#[derive(Clone)]
+pub struct SaleFees {
+    pub royalty_bps: u32,
+    pub royalty_receiver: Address,
+    pub platform_fee_bps: u32,
+    pub platform_fee_receiver: Address,
 }
 
 #[contracttype]
@@ -28,6 +62,10 @@ enum DataKey {
     MaxSupply,
     OpenMint,
     PaymentToken,
+    RoyaltyBps,
+    RoyaltyReceiver,
+    PlatformFeeBps,
+    PlatformFeeReceiver,
     Owner(u32),
     TokenUri(u32),
     Balance(Address),
@@ -44,6 +82,7 @@ pub struct OrbitNft;
 impl OrbitNft {
     /// Initialize a SEP-50 collection.
     /// `max_supply` 0 = unlimited. `open_mint` lets anyone mint to themselves.
+    /// Fee bps are in basis points (100 = 1%).
     pub fn initialize(
         env: Env,
         admin: Address,
@@ -53,11 +92,13 @@ impl OrbitNft {
         payment_token: Address,
         max_supply: u32,
         open_mint: bool,
+        fees: MarketplaceFeeConfig,
     ) {
         if env.storage().instance().has(&DataKey::Admin) {
             panic!("already initialized");
         }
         admin.require_auth();
+        Self::validate_fees(&fees);
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Name, &name);
         env.storage().instance().set(&DataKey::Symbol, &symbol);
@@ -68,6 +109,66 @@ impl OrbitNft {
         env.storage().instance().set(&DataKey::MaxSupply, &max_supply);
         env.storage().instance().set(&DataKey::OpenMint, &open_mint);
         env.storage().instance().set(&DataKey::NextId, &1u32);
+        Self::store_fees(&env, &fees);
+    }
+
+    /// One-shot / upgrade helper: set marketplace fees when missing or update royalty.
+    /// Platform fee receiver can only be set if not already configured (Orbit lock-in).
+    pub fn configure_marketplace_fees(env: Env, admin: Address, fees: MarketplaceFeeConfig) {
+        Self::require_admin(&env, &admin);
+        Self::validate_fees(&fees);
+        env.storage()
+            .instance()
+            .set(&DataKey::RoyaltyBps, &fees.royalty_bps);
+        env.storage()
+            .instance()
+            .set(&DataKey::RoyaltyReceiver, &fees.royalty_receiver);
+        if !env.storage().instance().has(&DataKey::PlatformFeeReceiver) {
+            env.storage()
+                .instance()
+                .set(&DataKey::PlatformFeeBps, &fees.platform_fee_bps);
+            env.storage()
+                .instance()
+                .set(&DataKey::PlatformFeeReceiver, &fees.platform_fee_receiver);
+        }
+    }
+
+    /// Collection admin can adjust creator royalty (0–10%).
+    pub fn set_royalty(env: Env, admin: Address, royalty_bps: u32, royalty_receiver: Address) {
+        Self::require_admin(&env, &admin);
+        if royalty_bps > MAX_ROYALTY_BPS {
+            panic!("royalty too high");
+        }
+        env.storage().instance().set(&DataKey::RoyaltyBps, &royalty_bps);
+        env.storage()
+            .instance()
+            .set(&DataKey::RoyaltyReceiver, &royalty_receiver);
+    }
+
+    pub fn sale_fees(env: Env) -> SaleFees {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        SaleFees {
+            royalty_bps: env
+                .storage()
+                .instance()
+                .get(&DataKey::RoyaltyBps)
+                .unwrap_or(0u32),
+            royalty_receiver: env
+                .storage()
+                .instance()
+                .get(&DataKey::RoyaltyReceiver)
+                .unwrap_or(admin.clone()),
+            platform_fee_bps: env
+                .storage()
+                .instance()
+                .get(&DataKey::PlatformFeeBps)
+                .unwrap_or(0u32),
+            platform_fee_receiver: env
+                .storage()
+                .instance()
+                .get(&DataKey::PlatformFeeReceiver)
+                .unwrap_or(admin),
+        }
     }
 
     // ─── SEP-50 metadata ───────────────────────────────────────────────
@@ -316,12 +417,46 @@ impl OrbitNft {
             .get(&DataKey::PaymentToken)
             .unwrap();
         let token_client = token::Client::new(&env, &payment);
-        token_client.transfer(&buyer, &listing.seller, &listing.price);
+
+        let fees = Self::sale_fees(env.clone());
+        let price = listing.price;
+        let platform_amt = Self::bps_of(price, fees.platform_fee_bps);
+        let royalty_amt = Self::bps_of(price, fees.royalty_bps);
+        let seller_amt = price
+            .checked_sub(platform_amt)
+            .and_then(|v| v.checked_sub(royalty_amt))
+            .unwrap_or(0);
+        if seller_amt < 0 {
+            panic!("fees exceed price");
+        }
+
+        // If royalty receiver is the seller, fold royalty into one transfer.
+        if royalty_amt > 0 && fees.royalty_receiver == listing.seller {
+            let combined = seller_amt.checked_add(royalty_amt).unwrap_or(seller_amt);
+            if combined > 0 {
+                token_client.transfer(&buyer, &listing.seller, &combined);
+            }
+        } else {
+            if seller_amt > 0 {
+                token_client.transfer(&buyer, &listing.seller, &seller_amt);
+            }
+            if royalty_amt > 0 {
+                token_client.transfer(&buyer, &fees.royalty_receiver, &royalty_amt);
+            }
+        }
+        if platform_amt > 0 {
+            token_client.transfer(&buyer, &fees.platform_fee_receiver, &platform_amt);
+        }
 
         env.storage()
             .persistent()
             .remove(&DataKey::Listing(token_id));
         Self::transfer_internal(&env, &listing.seller, &buyer, token_id);
+
+        env.events().publish(
+            (Symbol::new(&env, "sale"), token_id, listing.seller.clone()),
+            (seller_amt, royalty_amt, platform_amt),
+        );
     }
 
     pub fn get_listing(env: Env, token_id: u32) -> Option<Listing> {
@@ -352,6 +487,40 @@ impl OrbitNft {
     }
 
     // ─── internals ─────────────────────────────────────────────────────
+
+    fn validate_fees(fees: &MarketplaceFeeConfig) {
+        if fees.royalty_bps > MAX_ROYALTY_BPS {
+            panic!("royalty too high");
+        }
+        if fees.platform_fee_bps > MAX_PLATFORM_FEE_BPS {
+            panic!("platform fee too high");
+        }
+    }
+
+    fn store_fees(env: &Env, fees: &MarketplaceFeeConfig) {
+        env.storage()
+            .instance()
+            .set(&DataKey::RoyaltyBps, &fees.royalty_bps);
+        env.storage()
+            .instance()
+            .set(&DataKey::RoyaltyReceiver, &fees.royalty_receiver);
+        env.storage()
+            .instance()
+            .set(&DataKey::PlatformFeeBps, &fees.platform_fee_bps);
+        env.storage()
+            .instance()
+            .set(&DataKey::PlatformFeeReceiver, &fees.platform_fee_receiver);
+    }
+
+    fn bps_of(amount: i128, bps: u32) -> i128 {
+        if amount <= 0 || bps == 0 {
+            return 0;
+        }
+        amount
+            .checked_mul(bps as i128)
+            .map(|v| v / 10_000)
+            .unwrap_or(0)
+    }
 
     fn require_admin(env: &Env, admin: &Address) {
         admin.require_auth();

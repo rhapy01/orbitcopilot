@@ -24,7 +24,7 @@ export const ORBIT_CONTRACT_IDS = {
     "CC2IDBXQLA5L6NDWMGV3M6JH5NVK6NG26HMQCEYEHLJUJ7Q35KXADT3G",
   nft:
     import.meta.env.VITE_ORBIT_NFT_CONTRACT_ID?.trim() ||
-    "CA34E5V5SAV64PPMS7IKARAVUV3B423PLPCMNPJ6WALXP4Q3KS2C64HU",
+    "CDABPHCZSEMMW7V5AWCJMFXXNP4OVYPLSZIYHW436YLXSADQH2CR5MMS",
   supply:
     import.meta.env.VITE_ORBIT_SUPPLY_CONTRACT_ID?.trim() ||
     "CAK6JTURV46VP2HSVFZORYJHBC4CYP4BDVJLQJK4AXSN6X75SIZRB6QV",
@@ -80,14 +80,20 @@ export const ORBIT_CONTRACT_METHODS = {
     "total_supply",
     "max_supply",
     "admin",
+    "configure_marketplace_fees",
+    "set_royalty",
+    "sale_fees",
   ],
   "orbit-nft-factory": [
     "initialize",
     "set_wasm_hash",
+    "set_platform_fee",
     "create_collection",
     "collections_of",
     "all_collections",
     "collection_count",
+    "platform_fee_bps",
+    "platform_fee_receiver",
   ],
   "orbit-supply": [
     "initialize",
