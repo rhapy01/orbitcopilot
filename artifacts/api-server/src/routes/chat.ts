@@ -152,6 +152,8 @@ import {
  NFT_CLAIM_BETA_RE,
  NFT_CREATE_COLLECTION_RE,
  NFT_LIST_RE,
+ NFT_MEDIA_PACK_RE,
+ NFT_MINT_NEXT_RE,
  NFT_MINT_RE,
  NFT_TRANSFER_RE,
  ORBIT_SUPPLY_CLAIM_RE,
@@ -391,6 +393,7 @@ interface ChatAction {
  | "nft_transfer"
  | "nft_cancel"
  | "nft_create_collection"
+ | "nft_media_pack"
  | "token_deploy"
  | "token_mint"
  | "orbit_supply_deposit"
@@ -425,6 +428,8 @@ interface ChatAction {
  royaltyBps?: number;
  /** User explicitly set max supply (including 0 = unlimited). */
  supplySpecified?: boolean;
+ mediaPackId?: string;
+ collectionContract?: string;
  priceXlm?: string;
  markPriceStale?: boolean;
  xdr?: string;
@@ -1766,6 +1771,61 @@ async function getDeterministicResponse(
  }
  }
 
+ const nftMintNext = content.match(NFT_MINT_NEXT_RE);
+ if (nftMintNext) {
+ if (!publicKey) return { text: AI_RESPONSES.connectWallet, action: null };
+ try {
+ const collectionContract = content.match(/\b(C[A-Z0-9]{55})\b/)?.[1];
+ const minted = await prepareNftMint({
+ walletAddress: publicKey,
+ useMediaPack: true,
+ collectionContract,
+ });
+ return {
+ text: minted.message,
+ action: {
+ type: "nft_mint",
+ marketHint: minted.name,
+ metadataUri: minted.metadataUri,
+ mediaPackId: minted.mediaPackId,
+ tokenId: minted.tokenId,
+ imageUrl: minted.imageUrl,
+ xdr: minted.xdr,
+ networkPassphrase: minted.networkPassphrase,
+ } as ChatAction,
+ };
+ } catch (err: any) {
+ return { text: err?.message ?? "Mint next failed", action: null };
+ }
+ }
+
+ const nftMediaPack = content.match(NFT_MEDIA_PACK_RE);
+ if (nftMediaPack) {
+ if (!publicKey) return { text: AI_RESPONSES.connectWallet, action: null };
+ const expected =
+ content.match(/\b(\d{1,4})\s+(?:unique\s+)?(?:images?|assets?|nfts?)\b/i)?.[1] ||
+ content.match(/\b(?:supply|max|size)\s+(\d{1,4})\b/i)?.[1];
+ const expectedCount = expected ? parseInt(expected, 10) : 0;
+ const nameMatch = content.match(
+ /\b(?:for|collection)\s+["']?([^"'\n]+?)["']?(?=\s*$|\s+symbol\b)/i
+ );
+ return {
+ text: [
+ "Media pack upload ready.",
+ expectedCount
+ ? `Expected **${expectedCount}** unique assets (name files \`1.png\`, \`2.png\`, …).`
+ : "ZIP your unique images (preferably \`1.png\`…\`N.png\`), then upload on the card.",
+ "After upload finishes, create/bind your collection and say **mint next NFT**.",
+ ].join("\n"),
+ action: {
+ type: "nft_media_pack",
+ marketHint: nameMatch?.[1]?.trim() || "NFT media pack",
+ maxSupply: Number.isFinite(expectedCount) ? expectedCount : 0,
+ supplySpecified: Boolean(expectedCount),
+ } as ChatAction,
+ };
+ }
+
  const nftMint = content.match(NFT_MINT_RE);
  if (nftMint) {
  if (!publicKey) return { text: AI_RESPONSES.connectWallet, action: null };
@@ -2721,7 +2781,7 @@ async function getAiResponse(
  ) {
  // Allow deterministic text-only replies for predict clarify / LP pair / list / errors
  const looksLikeActionText =
- /several markets match|orbit predict|no market matched|prepared \d+ swaps|on-chain prediction|how many|reply with an amount|still need a number|i’ll prepare an|i'll prepare an|wallets are already funded|second asset|pair with|reply with an asset|liquidity pool|matching amount from the (?:live )?pool|got it —|collection description|add \*\*collection artwork\*\*|paste an image url|say \*\*upload\*\*|cancelled collection setup|all set —/i.test(
+ /several markets match|orbit predict|no market matched|prepared \d+ swaps|on-chain prediction|how many|reply with an amount|still need a number|i’ll prepare an|i'll prepare an|wallets are already funded|second asset|pair with|reply with an asset|liquidity pool|matching amount from the (?:live )?pool|got it —|collection description|add \*\*collection artwork\*\*|paste an image url|say \*\*upload\*\*|cancelled collection setup|all set —|media pack upload ready|pack ready/i.test(
  actionPass.text
  ) || actionPass.pendingPredict;
  // LP pair clarify / NFT collection wizard — never let the LLM override

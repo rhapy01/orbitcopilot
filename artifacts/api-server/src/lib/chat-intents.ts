@@ -17,6 +17,12 @@ export const NFT_CANCEL_RE =
  /\bcancel\s+(?:listing\s+(?:for\s+)?)?nft\s+#?(\d+)\b|\bunlist\s+nft\s+#?(\d+)\b/i;
 export const NFT_CREATE_COLLECTION_RE =
  /\bcreate\s+(?:an?\s+)?(?:nft\s+)?collection\b(?:\s+(?:called|named)?\s*["']?([^"'\n]+?)["']?(?=\s*(?:,|\s)+(?:symbol|max|total|supply|ts|royalty|description|image|website|banner)\b|\s*$))?(?:\s+symbol\s+([A-Za-z0-9]{1,12}))?(?:\s+max(?:\s+supply)?\s+(\d+))?/i;
+/** Upload ZIP / media pack for unique drop assets. */
+export const NFT_MEDIA_PACK_RE =
+ /\b(?:upload|add)\s+(?:(?:a|an|my)\s+)?(?:nft\s+)?(?:media\s+)?pack\b|\bupload\s+(?:\d+\s+)?(?:unique\s+)?(?:images?|assets?|media)\b|\bmedia\s+pack\b/i;
+/** Mint next unique NFT from a ready media pack. */
+export const NFT_MINT_NEXT_RE =
+ /\bmint\s+next(?:\s+(?:an?\s+)?nft)?\b|\bmint\s+(?:from\s+)?(?:my\s+)?(?:media\s+)?pack\b|\bmint\s+next\s+from\s+(?:my\s+)?collection\b/i;
 export const NFT_CLAIM_BETA_RE =
  /\bclaim\s+(?:my\s+)?(?:orbit\s+)?beta\s+(?:tester\s+)?nft\b|\bclaim\s+(?:my\s+)?feedback\s+nft\b|\bi\s+have\s+submitted\s+my\s+feedback[,\s]+mint\s+my\s+beta\s+tester\s+nft\b|\bmint\s+my\s+beta\s+tester\s+nft\b/i;
 /** Launch fungible token (classic + SAC). Avoid colliding with "mint NFT". */
@@ -48,6 +54,8 @@ export type IntentKind =
  | "nft_transfer"
  | "nft_cancel"
  | "nft_create_collection"
+ | "nft_media_pack"
+ | "nft_mint_next"
  | "nft_claim_beta"
  | "token_launch"
  | "token_mint_supply"
@@ -64,6 +72,8 @@ export function classifyGreenbeltIntent(content: string): IntentKind {
  if (ORBIT_SUPPLY_DEPOSIT_RE.test(content)) return "orbit_supply_deposit";
  if (ORBIT_SUPPLY_WITHDRAW_RE.test(content)) return "orbit_supply_withdraw";
  if (NFT_CREATE_COLLECTION_RE.test(content)) return "nft_create_collection";
+ if (NFT_MEDIA_PACK_RE.test(content)) return "nft_media_pack";
+ if (NFT_MINT_NEXT_RE.test(content)) return "nft_mint_next";
  if (TOKEN_LAUNCH_RE.test(content)) return "token_launch";
  if (TOKEN_MINT_SUPPLY_RE.test(content)) return "token_mint_supply";
  if (NFT_MINT_RE.test(content)) return "nft_mint";

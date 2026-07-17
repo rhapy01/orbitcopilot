@@ -16,6 +16,7 @@ import {
   STELDEX_FULL_RANGE,
   matchSteldexAddLiquidityAmounts,
 } from "./steldex";
+import { isLpAutoAmount } from "./defi-math";
 import { wrapActionWithTrustlineIfNeeded } from "./stellar";
 
 export type EnrichedAction = {
@@ -192,18 +193,21 @@ export async function enrichChatAction(
   }
 
   if (type === "soroswap_add_liquidity") {
-    if (!sendAmount || !amountB || !sendAsset || !destAsset) return null;
+    if (!sendAmount || !sendAsset || !destAsset) return null;
     if (!soroswapConfigured() || !(await isSoroswapPair(sendAsset, destAsset))) return null;
+    const oneSided = isLpAutoAmount(amountB);
+    if (!oneSided && !amountB) return null;
     const matched = await matchSoroswapAddLiquidityAmounts({
       symbolA: sendAsset,
       symbolB: destAsset,
       amountAMax: sendAmount,
-      amountBMax: amountB,
+      amountBMax: oneSided ? "AUTO" : amountB!,
+      anchorSide: oneSided ? 0 : undefined,
     });
     return {
       type,
       sendAmount: matched?.amount0 ?? sendAmount,
-      amountB: matched?.amount1 ?? amountB,
+      amountB: matched?.amount1 ?? (oneSided ? undefined : amountB),
       sendAsset,
       destAsset,
       pair: pair ?? `${sendAsset}/${destAsset}`,
@@ -258,10 +262,29 @@ export async function enrichChatAction(
 
     let outAmount = sendAmount;
     let outAmountB = amountB;
-    if (type === "steldex_add_liquidity" && sendAmount && amountB) {
-      // Map user amounts onto pool token0/token1 order, then match ratio
-      const user0 = a === pool.symbol0 ? sendAmount : amountB;
-      const user1 = a === pool.symbol0 ? amountB : sendAmount;
+    if (type === "steldex_add_liquidity" && sendAmount && a && b) {
+      const oneSided = isLpAutoAmount(amountB);
+      // Map user amounts onto pool token0/token1 order, then match ratio.
+      // One-sided: keep the user-stated asset amount and derive the other.
+      const user0 = oneSided
+        ? a === pool.symbol0
+          ? sendAmount
+          : "AUTO"
+        : a === pool.symbol0
+          ? sendAmount
+          : amountB!;
+      const user1 = oneSided
+        ? a === pool.symbol0
+          ? "AUTO"
+          : sendAmount
+        : a === pool.symbol0
+          ? amountB!
+          : sendAmount;
+      const anchorSide: 0 | 1 | undefined = oneSided
+        ? a === pool.symbol0
+          ? 0
+          : 1
+        : undefined;
       const matched = await matchSteldexAddLiquidityAmounts({
         symbol0: pool.symbol0,
         symbol1: pool.symbol1,
@@ -269,9 +292,15 @@ export async function enrichChatAction(
         token1Contract: pool.token1Contract,
         amount0Max: user0,
         amount1Max: user1,
+        anchorSide,
       });
-      outAmount = matched?.amount0 ?? user0;
-      outAmountB = matched?.amount1 ?? user1;
+      if (matched) {
+        outAmount = matched.amount0;
+        outAmountB = matched.amount1;
+      } else if (!oneSided) {
+        outAmount = user0;
+        outAmountB = user1;
+      }
     }
 
     return {
@@ -338,12 +367,24 @@ export async function enrichChatAction(
           walletAddress: wallet,
           name: mintName,
           metadataUri,
+          mediaPackId:
+            typeof raw.mediaPackId === "string" ? raw.mediaPackId : undefined,
+          useMediaPack: raw.useMediaPack === true,
+          collectionContract:
+            typeof raw.collectionContract === "string"
+              ? raw.collectionContract
+              : typeof raw.marketHint === "string" &&
+                  String(raw.marketHint).startsWith("C")
+                ? raw.marketHint
+                : undefined,
         });
         return {
           ...raw,
           type,
           sendAsset: built.name,
           marketHint: built.metadataUri,
+          mediaPackId: built.mediaPackId,
+          tokenId: built.tokenId,
           xdr: built.xdr,
           networkPassphrase: built.networkPassphrase,
         } as EnrichedAction;

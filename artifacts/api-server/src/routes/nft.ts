@@ -12,6 +12,14 @@ import {
 import { getNftMetadata } from "../lib/nft-metadata";
 import { getNftMedia, storeNftMedia } from "../lib/nft-media";
 import {
+  addMediaPackItems,
+  bindMediaPackToCollection,
+  createMediaPack,
+  finalizeMediaPack,
+  getMediaPack,
+  NFT_PACK_CHUNK_MAX,
+} from "../lib/nft-media-pack";
+import {
  BETA_NFT_NAME,
  BETA_NFT_URI,
  BETA_NFT_MAX_SUPPLY,
@@ -59,6 +67,137 @@ router.post("/nft/media", async (req, res): Promise<void> => {
     );
   } catch (err: any) {
     res.status(400).json({ error: err?.message ?? "media upload failed" });
+  }
+});
+
+/** Create an empty media pack (ZIP assets uploaded in chunks). */
+router.post("/nft/media-pack", async (req, res): Promise<void> => {
+  const walletAddress =
+    typeof req.body?.walletAddress === "string" ? req.body.walletAddress.trim() : "";
+  if (!walletAddress || !/^G[A-Z2-7]{55}$/.test(walletAddress)) {
+    res.status(400).json({ error: "walletAddress required" });
+    return;
+  }
+  try {
+    const result = await createMediaPack({
+      walletAddress,
+      name: typeof req.body?.name === "string" ? req.body.name : undefined,
+      expectedCount:
+        req.body?.expectedCount != null ? Number(req.body.expectedCount) : undefined,
+      collectionContract:
+        typeof req.body?.collectionContract === "string"
+          ? req.body.collectionContract
+          : undefined,
+    });
+    res.status(201).json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err?.message ?? "create pack failed" });
+  }
+});
+
+router.get("/nft/media-pack/:id", async (req, res): Promise<void> => {
+  const id = typeof req.params.id === "string" ? req.params.id.trim() : "";
+  if (!/^[a-f0-9]{32}$/i.test(id)) {
+    res.status(400).json({ error: "invalid pack id" });
+    return;
+  }
+  try {
+    const pack = await getMediaPack(id);
+    if (!pack) {
+      res.status(404).json({ error: "pack not found" });
+      return;
+    }
+    res.json({
+      packId: pack.id,
+      name: pack.name,
+      creator: pack.creator,
+      collectionContract: pack.collectionContract,
+      expectedCount: pack.expectedCount,
+      itemCount: pack.itemCount,
+      status: pack.status,
+    });
+  } catch (err: any) {
+    res.status(502).json({ error: err?.message ?? "pack unavailable" });
+  }
+});
+
+/** Upload a chunk of pack items (max NFT_PACK_CHUNK_MAX). Client unzips ZIP. */
+router.post("/nft/media-pack/:id/items", async (req, res): Promise<void> => {
+  const packId = typeof req.params.id === "string" ? req.params.id.trim() : "";
+  const walletAddress =
+    typeof req.body?.walletAddress === "string" ? req.body.walletAddress.trim() : "";
+  const items = Array.isArray(req.body?.items) ? req.body.items : [];
+  if (!/^[a-f0-9]{32}$/i.test(packId) || !walletAddress) {
+    res.status(400).json({ error: "pack id and walletAddress required" });
+    return;
+  }
+  if (items.length > NFT_PACK_CHUNK_MAX) {
+    res.status(400).json({ error: `Max ${NFT_PACK_CHUNK_MAX} items per chunk` });
+    return;
+  }
+  try {
+    const result = await addMediaPackItems({
+      packId,
+      walletAddress,
+      collectionName:
+        typeof req.body?.collectionName === "string"
+          ? req.body.collectionName
+          : undefined,
+      description:
+        typeof req.body?.description === "string" ? req.body.description : undefined,
+      items: items.map((it: any) => ({
+        tokenIndex: Number(it?.tokenIndex),
+        dataUrl: String(it?.dataUrl ?? ""),
+        fileName: typeof it?.fileName === "string" ? it.fileName : undefined,
+        name: typeof it?.name === "string" ? it.name : undefined,
+        description: typeof it?.description === "string" ? it.description : undefined,
+        traits: typeof it?.traits === "string" ? it.traits : undefined,
+      })),
+    });
+    res.status(201).json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err?.message ?? "pack upload failed" });
+  }
+});
+
+router.post("/nft/media-pack/:id/finalize", async (req, res): Promise<void> => {
+  const packId = typeof req.params.id === "string" ? req.params.id.trim() : "";
+  const walletAddress =
+    typeof req.body?.walletAddress === "string" ? req.body.walletAddress.trim() : "";
+  if (!/^[a-f0-9]{32}$/i.test(packId) || !walletAddress) {
+    res.status(400).json({ error: "pack id and walletAddress required" });
+    return;
+  }
+  try {
+    res.json(await finalizeMediaPack({ packId, walletAddress }));
+  } catch (err: any) {
+    res.status(400).json({ error: err?.message ?? "finalize failed" });
+  }
+});
+
+router.post("/nft/media-pack/:id/bind", async (req, res): Promise<void> => {
+  const packId = typeof req.params.id === "string" ? req.params.id.trim() : "";
+  const walletAddress =
+    typeof req.body?.walletAddress === "string" ? req.body.walletAddress.trim() : "";
+  const collectionContract =
+    typeof req.body?.collectionContract === "string"
+      ? req.body.collectionContract.trim()
+      : "";
+  if (!/^[a-f0-9]{32}$/i.test(packId) || !walletAddress || !collectionContract) {
+    res.status(400).json({
+      error: "pack id, walletAddress, collectionContract required",
+    });
+    return;
+  }
+  try {
+    await bindMediaPackToCollection({
+      packId,
+      walletAddress,
+      collectionContract,
+    });
+    res.json({ ok: true, packId, collectionContract });
+  } catch (err: any) {
+    res.status(400).json({ error: err?.message ?? "bind failed" });
   }
 });
 
@@ -214,6 +353,10 @@ router.post("/nft/create-collection", async (req, res): Promise<void> => {
         req.body?.royaltyBps != null
           ? Number(req.body.royaltyBps)
           : undefined,
+      mediaPackId:
+        typeof req.body?.mediaPackId === "string"
+          ? req.body.mediaPackId
+          : undefined,
     });
     res.status(201).json(result);
   } catch (err: any) {
@@ -247,6 +390,9 @@ router.post("/nft/mint", async (req, res): Promise<void> => {
  typeof req.body?.collectionContract === "string"
  ? req.body.collectionContract
  : undefined,
+ mediaPackId:
+ typeof req.body?.mediaPackId === "string" ? req.body.mediaPackId : undefined,
+ useMediaPack: req.body?.useMediaPack === true,
  });
  res.status(201).json(result);
  } catch (err: any) {

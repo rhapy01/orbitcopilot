@@ -212,6 +212,8 @@ export async function prepareCreateCollection(input: {
  openMint?: boolean;
  /** Creator royalty in basis points (100 = 1%). Default 250 = 2.5%. */
  royaltyBps?: number;
+ /** Optional media pack — max supply defaults to pack size when set. */
+ mediaPackId?: string;
 }) {
  const factoryId = requireNftFactoryContract();
  const { Address, nativeToScVal, xdr } = await import("@stellar/stellar-sdk");
@@ -220,6 +222,21 @@ export async function prepareCreateCollection(input: {
  if (!name || symbol.length < 1) {
  throw new Error('Need collection name and symbol, e.g. "create NFT collection Orbit Foxes symbol FOX"');
  }
+
+ let packItemCount = 0;
+ if (input.mediaPackId?.trim()) {
+ const { getMediaPack } = await import("./nft-media-pack");
+ const pack = await getMediaPack(input.mediaPackId.trim());
+ if (!pack) throw new Error("Media pack not found");
+ if (pack.creator !== input.walletAddress) {
+ throw new Error("Media pack belongs to a different wallet");
+ }
+ if (pack.status !== "ready") {
+ throw new Error("Finalize the media pack before creating the collection");
+ }
+ packItemCount = pack.itemCount;
+ }
+
  let image = input.image?.trim();
  if (input.imageDataUrl) {
  const uploaded = await storeNftMedia({
@@ -253,11 +270,23 @@ export async function prepareCreateCollection(input: {
  { trait_type: "Standard", value: "SEP-50" },
  { trait_type: "Creator royalty", value: `${(royaltyBps / 100).toFixed(2)}%` },
  { trait_type: "Platform fee", value: `${(NFT_PLATFORM_FEE_BPS / 100).toFixed(2)}%` },
+ ...(packItemCount
+ ? [{ trait_type: "Media pack", value: `${packItemCount} unique assets` }]
+ : []),
  ],
  },
  });
  const baseUri = (input.baseUri ?? collectionMetadata.uri).slice(0, 200);
- const maxSupply = Math.max(0, Math.floor(input.maxSupply ?? 0));
+ const maxSupply = Math.max(
+ 0,
+ Math.floor(
+ packItemCount > 0
+ ? input.maxSupply && input.maxSupply > 0
+ ? Math.min(input.maxSupply, packItemCount)
+ : packItemCount
+ : (input.maxSupply ?? 0)
+ )
+ );
  const openMint = input.openMint !== false;
  const salt = await collectionSalt(input.walletAddress, name, symbol);
  const saltScVal = xdr.ScVal.scvBytes(salt);
@@ -286,12 +315,13 @@ export async function prepareCreateCollection(input: {
  openMint,
  royaltyBps,
  platformFeeBps: NFT_PLATFORM_FEE_BPS,
+ mediaPackId: input.mediaPackId?.trim() || undefined,
  factoryId,
  xdr: built.xdr,
  networkPassphrase: built.networkPassphrase,
  message: `Create SEP-50 NFT collection "${name}" (${symbol})${
  maxSupply ? ` max ${maxSupply}` : ""
- }. Secondary sales: ${(royaltyBps / 100).toFixed(2)}% creator royalty + ${(NFT_PLATFORM_FEE_BPS / 100).toFixed(2)}% Orbit fee. Sign to deploy.`,
+ }${packItemCount ? ` with ${packItemCount}-asset media pack` : ""}. Secondary sales: ${(royaltyBps / 100).toFixed(2)}% creator royalty + ${(NFT_PLATFORM_FEE_BPS / 100).toFixed(2)}% Orbit fee. Sign to deploy.`,
  };
 }
 
@@ -306,11 +336,20 @@ export async function prepareNftMint(input: {
  animationDataUrl?: string;
  traits?: string;
  collectionContract?: string;
+ /** When set (or collection has a bound pack), mint next unique pack asset. */
+ mediaPackId?: string;
+ useMediaPack?: boolean;
 }) {
  const contractId = resolveCollectionId(input.collectionContract);
  const { Address, nativeToScVal } = await import("@stellar/stellar-sdk");
  let name = (input.name ?? "Orbit NFT").slice(0, 64);
  let uri = (input.metadataUri ?? "").slice(0, 200);
+ let packInfo: {
+ packId: string;
+ tokenIndex: number;
+ itemCount: number;
+ imageUrl?: string;
+ } | null = null;
 
  // Beta tester NFT: one mint per wallet (DB + on-chain), whitelist required.
  const { isBetaNftMetadata, BETA_NFT_NAME, BETA_NFT_URI } = await import("./beta-nft");
@@ -333,6 +372,30 @@ export async function prepareNftMint(input: {
  }
  name = BETA_NFT_NAME.slice(0, 64);
  uri = BETA_NFT_URI.slice(0, 200);
+ }
+
+ // Sequential media-pack mint: next unique asset by on-chain total_supply.
+ if (!uri && (input.mediaPackId || input.useMediaPack)) {
+ const { resolveNextPackMint } = await import("./nft-media-pack");
+ const next = await resolveNextPackMint({
+ collectionContract: contractId,
+ mediaPackId: input.mediaPackId,
+ walletAddress: input.walletAddress,
+ });
+ if (next) {
+ name = next.name.slice(0, 64);
+ uri = next.metadataUri.slice(0, 200);
+ packInfo = {
+ packId: next.packId,
+ tokenIndex: next.tokenIndex,
+ itemCount: next.itemCount,
+ imageUrl: next.imageUrl,
+ };
+ } else if (input.useMediaPack || input.mediaPackId) {
+ throw new Error(
+ "No ready media pack found. Upload a ZIP pack and finalize it first."
+ );
+ }
  }
 
  // Auto-build SEP-50 / OpenSea metadata when chat doesn't pass a URI.
@@ -390,9 +453,14 @@ export async function prepareNftMint(input: {
  name,
  metadataUri: uri,
  collectionContract: contractId,
+ mediaPackId: packInfo?.packId,
+ tokenId: packInfo?.tokenIndex,
+ imageUrl: packInfo?.imageUrl,
  xdr: built.xdr,
  networkPassphrase: built.networkPassphrase,
- message: `Mint NFT "${name}" (SEP-50 metadata ready). Sign to confirm.`,
+ message: packInfo
+ ? `Mint ${name} (${packInfo.tokenIndex}/${packInfo.itemCount} from media pack). Sign to confirm.`
+ : `Mint NFT "${name}" (SEP-50 metadata ready). Sign to confirm.`,
  };
 }
 
@@ -520,8 +588,10 @@ export async function formatNftCatalog(): Promise<string> {
  "Orbit NFT launchpad (SEP-50 + OpenSea-style metadata, Soroban testnet):",
  "",
  "• Create collection (guided): \"create NFT collection The Clanners, total supply 1000\" → description → artwork → sign card",
+ "• Media pack (unique drop): upload a ZIP of 1.png…N.png on the create card, or \"upload media pack\" then \"mint next NFT\"",
  "• Or one-shot: \"create NFT collection Foxes symbol FOX max 1000 royalty 5% description \\\"…\\\" image https://…\"",
  "• Mint with metadata: \"mint an NFT called Stellar Fox image https://… traits Background=Nebula\"",
+ "• Mint next from pack: \"mint next NFT\" / \"mint next from my collection\"",
  "• Beta reward: feedback (heart) → \"claim my beta NFT\"",
  "• List / buy / transfer: \"list NFT #1 for 5 XLM\" · \"buy NFT #1\" · \"transfer NFT #1 to G…\"",
  "• Cancel listing: \"cancel listing NFT #1\"",

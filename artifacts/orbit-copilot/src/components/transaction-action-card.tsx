@@ -95,6 +95,7 @@ export interface ChatAction {
  | "nft_transfer"
  | "nft_cancel"
  | "nft_create_collection"
+ | "nft_media_pack"
  | "token_deploy"
  | "token_mint"
  | "orbit_supply_deposit"
@@ -155,6 +156,10 @@ export interface ChatAction {
  royaltyBps?: number;
  /** User explicitly set max supply (including 0 = unlimited). */
  supplySpecified?: boolean;
+ mediaPackId?: string;
+ collectionContract?: string;
+ /** When true, mint next asset from media pack. */
+ useMediaPack?: boolean;
  priceXlm?: string;
  markPriceStale?: boolean;
  xdr?: string;
@@ -167,9 +172,13 @@ const MEDIA_MAX_BYTES = 8 * 1024 * 1024;
 
 function needsMediaAttach(action: ChatAction): boolean {
  if (action.type === "nft_mint" && isBetaNftMintAction(action)) return false;
+ if (action.type === "nft_mint" && (action.useMediaPack || action.mediaPackId)) {
+ return false;
+ }
  return (
  action.type === "nft_mint" ||
  action.type === "nft_create_collection" ||
+ action.type === "nft_media_pack" ||
  action.type === "token_deploy"
  );
 }
@@ -193,8 +202,10 @@ function mediaPreviewUrl(action: ChatAction): string | null {
 function collectionSetupReady(action: ChatAction): boolean {
  if (action.type !== "nft_create_collection") return true;
  const hasDesc = Boolean(action.description?.trim());
- const hasArt = Boolean(action.imageDataUrl || action.imageUrl?.trim());
- const hasSupply = Boolean(action.supplySpecified);
+ const hasArt = Boolean(
+ action.imageDataUrl || action.imageUrl?.trim() || action.mediaPackId
+ );
+ const hasSupply = Boolean(action.supplySpecified || action.mediaPackId);
  return hasDesc && hasArt && hasSupply;
 }
 
@@ -202,8 +213,14 @@ function collectionSetupMissing(action: ChatAction): string[] {
  if (action.type !== "nft_create_collection") return [];
  const missing: string[] = [];
  if (!action.description?.trim()) missing.push("description");
- if (!action.imageDataUrl && !action.imageUrl?.trim()) missing.push("artwork");
- if (!action.supplySpecified) missing.push("max supply");
+ if (
+ !action.imageDataUrl &&
+ !action.imageUrl?.trim() &&
+ !action.mediaPackId
+ ) {
+ missing.push("artwork or media pack ZIP");
+ }
+ if (!action.supplySpecified && !action.mediaPackId) missing.push("max supply");
  return missing;
 }
 
@@ -307,6 +324,9 @@ async function rebuildOrbitNativeXdr(
  image: action.imageUrl,
  imageDataUrl: action.imageDataUrl,
  animationDataUrl: action.animationDataUrl,
+ collectionContract: action.collectionContract,
+ mediaPackId: action.mediaPackId,
+ useMediaPack: action.useMediaPack === true || Boolean(action.mediaPackId),
  };
  }
  break;
@@ -324,6 +344,7 @@ async function rebuildOrbitNativeXdr(
  maxSupply: action.maxSupply ?? 0,
  openMint: true,
  royaltyBps: action.royaltyBps ?? 250,
+ mediaPackId: action.mediaPackId,
  };
  break;
  case "nft_cancel":
@@ -569,6 +590,8 @@ function actionTitle(action: ChatAction): string {
  return "Mint NFT (SEP-50)";
  case "nft_create_collection":
  return "Create NFT Collection";
+ case "nft_media_pack":
+ return "Upload Media Pack";
  case "nft_cancel":
  return "Cancel NFT Listing";
  case "nft_list":
@@ -820,7 +843,9 @@ export function TransactionActionCard({
  const [outcomeLine, setOutcomeLine] = useState<string | null>(null);
  const [mediaBusy, setMediaBusy] = useState(false);
  const [mediaError, setMediaError] = useState<string | null>(null);
+ const [packProgress, setPackProgress] = useState<string | null>(null);
  const imageInputRef = useRef<HTMLInputElement>(null);
+ const packZipRef = useRef<HTMLInputElement>(null);
  const trackedStatus = useRef<Status>("idle");
  const betaClaimRecorded = useRef(false);
  const confidence = actionConfidence(action);
@@ -1396,6 +1421,103 @@ export function TransactionActionCard({
  }));
  };
 
+ const handlePackZip = async (file: File | null) => {
+ if (!file || !publicKey) return;
+ setMediaError(null);
+ setPackProgress(null);
+ if (!file.name.toLowerCase().endsWith(".zip") && file.type !== "application/zip") {
+ setMediaError("Choose a .zip of unique images (1.png, 2.png, …).");
+ return;
+ }
+ setMediaBusy(true);
+ try {
+ const { uploadNftMediaPack } = await import("@/lib/nft-media-pack-upload");
+ const result = await uploadNftMediaPack({
+ zipFile: file,
+ walletAddress: publicKey,
+ name: action.marketHint?.replace(/\s*\([^)]*\)\s*$/, "").trim(),
+ expectedCount: action.maxSupply && action.maxSupply > 0 ? action.maxSupply : undefined,
+ collectionContract: action.collectionContract,
+ description: action.description,
+ onProgress: (p) => setPackProgress(p.message),
+ });
+ setAction((prev) => ({
+ ...prev,
+ mediaPackId: result.packId,
+ maxSupply: result.itemCount,
+ supplySpecified: true,
+ }));
+ setPackProgress(`Pack ready — ${result.itemCount} unique assets`);
+ } catch (err: any) {
+ setMediaError(err?.message ?? "Media pack upload failed");
+ setPackProgress(null);
+ } finally {
+ setMediaBusy(false);
+ if (packZipRef.current) packZipRef.current.value = "";
+ }
+ };
+
+ if (action.type === "nft_media_pack") {
+ return (
+ <div className="mt-2 max-w-sm rounded-2xl border bg-card p-4 space-y-3">
+ <div className="text-sm font-semibold">{actionTitle(action)}</div>
+ <p className="text-[11px] text-muted-foreground">
+ Upload a ZIP of unique images named like <code>1.png</code>…<code>N.png</code>.
+ Then create your collection (or bind the pack) and say <strong>mint next NFT</strong>.
+ </p>
+ {action.mediaPackId ? (
+ <div className="text-sm text-green-600 flex items-center gap-2">
+ <CheckCircle2 className="w-4 h-4 shrink-0" />
+ Pack ready ({action.maxSupply ?? "?"} assets)
+ </div>
+ ) : (
+ <>
+ <input
+ ref={packZipRef}
+ type="file"
+ accept=".zip,application/zip"
+ className="hidden"
+ onChange={(e) => void handlePackZip(e.target.files?.[0] ?? null)}
+ />
+ <Button
+ type="button"
+ size="sm"
+ className="w-full rounded-xl bg-orbit-gradient text-white border-0"
+ disabled={isBusy || mediaBusy || !isConnected}
+ onClick={() => packZipRef.current?.click()}
+ >
+ {mediaBusy ? (
+ <>
+ <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+ {packProgress ?? "Uploading…"}
+ </>
+ ) : !isConnected ? (
+ <>
+ <Wallet className="w-4 h-4 mr-1" />
+ Connect wallet first
+ </>
+ ) : (
+ <>
+ <ImagePlus className="w-4 h-4 mr-1" />
+ Upload ZIP media pack
+ </>
+ )}
+ </Button>
+ </>
+ )}
+ {packProgress && !action.mediaPackId && (
+ <p className="text-[11px] text-muted-foreground">{packProgress}</p>
+ )}
+ {mediaError && <p className="text-[11px] text-destructive">{mediaError}</p>}
+ {action.mediaPackId && (
+ <p className="text-[11px] text-muted-foreground">
+ Pack ID: {action.mediaPackId.slice(0, 8)}… — say “create NFT collection …” or “mint next NFT”.
+ </p>
+ )}
+ </div>
+ );
+ }
+
  if (action.type === "add_trustline") {
  const asset = action.sendAsset ?? "token";
  return (
@@ -1850,6 +1972,54 @@ export function TransactionActionCard({
  </div>
  {mediaError && (
  <p className="text-[11px] text-destructive">{mediaError}</p>
+ )}
+ {(action.type === "nft_create_collection" || action.type === "nft_media_pack") && (
+ <div className="space-y-1.5 pt-1 border-t border-border/60">
+ <p className="text-[11px] font-medium text-foreground">
+ Unique drop (ZIP media pack)
+ </p>
+ <p className="text-[11px] text-muted-foreground">
+ Optional: ZIP of <code>1.png</code>…<code>N.png</code> for sequential open mint.
+ </p>
+ {action.mediaPackId ? (
+ <p className="text-[11px] text-green-600">
+ Pack linked — {action.maxSupply ?? "?"} assets ({action.mediaPackId.slice(0, 8)}…)
+ </p>
+ ) : (
+ <>
+ <input
+ ref={packZipRef}
+ type="file"
+ accept=".zip,application/zip"
+ className="hidden"
+ onChange={(e) => void handlePackZip(e.target.files?.[0] ?? null)}
+ />
+ <Button
+ type="button"
+ size="sm"
+ variant="outline"
+ className="w-full rounded-xl"
+ disabled={isBusy || mediaBusy || !isConnected}
+ onClick={() => packZipRef.current?.click()}
+ >
+ {mediaBusy ? (
+ <>
+ <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+ {packProgress ?? "Uploading pack…"}
+ </>
+ ) : (
+ <>
+ <ImagePlus className="w-3.5 h-3.5 mr-1.5" />
+ Upload ZIP media pack
+ </>
+ )}
+ </Button>
+ </>
+ )}
+ {packProgress && (
+ <p className="text-[11px] text-muted-foreground">{packProgress}</p>
+ )}
+ </div>
  )}
  </div>
  )}
