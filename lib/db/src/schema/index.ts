@@ -6,3 +6,4 @@ export * from "./defi";
 export * from "./predict";
 export * from "./perps";
 export * from "./treasury";
+export * from "./nft";

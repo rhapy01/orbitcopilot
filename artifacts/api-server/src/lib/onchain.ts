@@ -37,6 +37,21 @@ export function requireNftContract(): string {
  return id;
 }
 
+export function requireNftFactoryContract(): string {
+ const id = process.env.ORBIT_NFT_FACTORY_CONTRACT_ID?.trim();
+ if (!id || !id.startsWith("C")) {
+ throw new Error(
+ "NFT collection factory not configured. Deploy contracts/orbit-nft-factory and set ORBIT_NFT_FACTORY_CONTRACT_ID=C…"
+ );
+ }
+ return id;
+}
+
+export function nftFactoryConfigured(): boolean {
+ const id = process.env.ORBIT_NFT_FACTORY_CONTRACT_ID?.trim();
+ return Boolean(id && id.startsWith("C"));
+}
+
 export function requireOrbitSupplyContract(): string {
  const id = process.env.ORBIT_SUPPLY_CONTRACT_ID?.trim();
  if (!id || !id.startsWith("C")) {

@@ -32,7 +32,8 @@ app.use(
 );
 app.use(cors({ origin: true, credentials: true }));
 app.use(cookieParser());
-app.use(express.json({ limit: "1mb" }));
+// NFT/token launch media accepts base64 payloads up to 8 MB.
+app.use(express.json({ limit: "12mb" }));
 app.use(express.urlencoded({ extended: true }));
 app.use("/api", rateLimit({ windowMs: 60_000, max: 120 }));
 // OTP is stricter: 5 attempts per 15 minutes

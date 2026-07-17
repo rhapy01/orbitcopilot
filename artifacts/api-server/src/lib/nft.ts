@@ -1,15 +1,24 @@
 /**
- * Orbit NFT - mintable collectibles with XLM listings (Soroban).
+ * Orbit NFT — SEP-50 collections + XLM marketplace (Soroban).
  *
- * Deploy contracts/orbit-nft and set ORBIT_NFT_CONTRACT_ID=C…
+ * Deploy contracts/orbit-nft (+ optional orbit-nft-factory) and set env IDs.
+ * Metadata JSON follows SEP-50 / OpenSea schema via nft-metadata.ts.
  */
 
 import {
  buildContractInvoke,
  NATIVE_XLM_SAC,
+ nftFactoryConfigured,
  requireNftContract,
+ requireNftFactoryContract,
 } from "./onchain";
 import { SOROBAN_RPC } from "./stellar";
+import {
+ parseTraits,
+ storeNftMetadata,
+ type Sep50Metadata,
+} from "./nft-metadata";
+import { storeNftMedia } from "./nft-media";
 
 function toStroops(human: string): string {
  const [w, f = ""] = human.trim().split(".");
@@ -17,19 +26,134 @@ function toStroops(human: string): string {
  return BigInt((w || "0") + frac).toString();
 }
 
+function resolveCollectionId(collectionContract?: string): string {
+ const id = collectionContract?.trim();
+ if (id?.startsWith("C")) return id;
+ return requireNftContract();
+}
+
+/** Build salt bytes for factory deploy from creator + name + symbol. */
+async function collectionSalt(
+ creator: string,
+ name: string,
+ symbol: string
+): Promise<Buffer> {
+ const { createHash } = await import("crypto");
+ return createHash("sha256")
+ .update(`${creator}:${name}:${symbol}:${Date.now()}`)
+ .digest();
+}
+
+export async function prepareCreateCollection(input: {
+ walletAddress: string;
+ name: string;
+ symbol: string;
+ baseUri?: string;
+ description?: string;
+ image?: string;
+ imageDataUrl?: string;
+ bannerImage?: string;
+ bannerImageDataUrl?: string;
+ externalUrl?: string;
+ maxSupply?: number;
+ openMint?: boolean;
+}) {
+ const factoryId = requireNftFactoryContract();
+ const { Address, nativeToScVal, xdr } = await import("@stellar/stellar-sdk");
+ const name = input.name.trim().slice(0, 64);
+ const symbol = input.symbol.trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12);
+ if (!name || symbol.length < 1) {
+ throw new Error('Need collection name and symbol, e.g. "create NFT collection Orbit Foxes symbol FOX"');
+ }
+ let image = input.image?.trim();
+ if (input.imageDataUrl) {
+ const uploaded = await storeNftMedia({
+ walletPublicKey: input.walletAddress,
+ dataUrl: input.imageDataUrl,
+ });
+ image = uploaded.url;
+ }
+ let bannerImage = input.bannerImage?.trim();
+ if (input.bannerImageDataUrl) {
+ const uploaded = await storeNftMedia({
+ walletPublicKey: input.walletAddress,
+ dataUrl: input.bannerImageDataUrl,
+ });
+ bannerImage = uploaded.url;
+ }
+ const collectionMetadata = await storeNftMetadata({
+ walletPublicKey: input.walletAddress,
+ metadata: {
+ name,
+ description:
+ input.description?.trim() ||
+ `${name} — a SEP-50 NFT collection launched with Orbit Copilot.`,
+ image,
+ banner_image: bannerImage,
+ featured_image: image,
+ external_url: input.externalUrl?.trim(),
+ attributes: [
+ { trait_type: "Symbol", value: symbol },
+ { trait_type: "Standard", value: "SEP-50" },
+ ],
+ },
+ });
+ const baseUri = (input.baseUri ?? collectionMetadata.uri).slice(0, 200);
+ const maxSupply = Math.max(0, Math.floor(input.maxSupply ?? 0));
+ const openMint = input.openMint !== false;
+ const salt = await collectionSalt(input.walletAddress, name, symbol);
+ const saltScVal = xdr.ScVal.scvBytes(salt);
+
+ const built = await buildContractInvoke({
+ sourcePublicKey: input.walletAddress,
+ contractId: factoryId,
+ method: "create_collection",
+ args: [
+ Address.fromString(input.walletAddress).toScVal(),
+ saltScVal,
+ nativeToScVal(name, { type: "string" }),
+ nativeToScVal(symbol, { type: "string" }),
+ nativeToScVal(baseUri, { type: "string" }),
+ nativeToScVal(maxSupply, { type: "u32" }),
+ xdr.ScVal.scvBool(openMint),
+ ],
+ });
+
+ return {
+ type: "nft_create_collection" as const,
+ name,
+ symbol,
+ maxSupply,
+ openMint,
+ factoryId,
+ xdr: built.xdr,
+ networkPassphrase: built.networkPassphrase,
+ message: `Create SEP-50 NFT collection "${name}" (${symbol})${
+ maxSupply ? ` max ${maxSupply}` : ""
+ }. Sign to deploy your collection contract.`,
+ };
+}
+
 export async function prepareNftMint(input: {
  walletAddress: string;
  name?: string;
  metadataUri?: string;
+ description?: string;
+ image?: string;
+ imageDataUrl?: string;
+ animationUrl?: string;
+ animationDataUrl?: string;
+ traits?: string;
+ collectionContract?: string;
 }) {
- const contractId = requireNftContract();
+ const contractId = resolveCollectionId(input.collectionContract);
  const { Address, nativeToScVal } = await import("@stellar/stellar-sdk");
  let name = (input.name ?? "Orbit NFT").slice(0, 64);
- let uri = (input.metadataUri ?? `ipfs://orbit/${Date.now()}`).slice(0, 200);
+ let uri = (input.metadataUri ?? "").slice(0, 200);
 
  // Beta tester NFT: one mint per wallet (DB + on-chain), whitelist required.
  const { isBetaNftMetadata, BETA_NFT_NAME, BETA_NFT_URI } = await import("./beta-nft");
- if (isBetaNftMetadata(name, uri)) {
+ if (isBetaNftMetadata(name, uri) || (!input.metadataUri && /beta\s*tester/i.test(name))) {
  const { resolveBetaNftStatus } = await import("./product-store");
  const status = await resolveBetaNftStatus(input.walletAddress);
  if (!status.eligible) {
@@ -50,6 +174,45 @@ export async function prepareNftMint(input: {
  uri = BETA_NFT_URI.slice(0, 200);
  }
 
+ // Auto-build SEP-50 / OpenSea metadata when chat doesn't pass a URI.
+ if (!uri) {
+ let image = input.image?.trim();
+ if (input.imageDataUrl) {
+ const uploaded = await storeNftMedia({
+ walletPublicKey: input.walletAddress,
+ dataUrl: input.imageDataUrl,
+ });
+ image = uploaded.url;
+ }
+ let animationUrl = input.animationUrl?.trim();
+ if (input.animationDataUrl) {
+ const uploaded = await storeNftMedia({
+ walletPublicKey: input.walletAddress,
+ dataUrl: input.animationDataUrl,
+ });
+ animationUrl = uploaded.url;
+ }
+ const meta: Sep50Metadata = {
+ name,
+ description:
+ input.description?.trim() ||
+ `${name} — minted via Orbit Copilot chat on Stellar Testnet (SEP-50).`,
+ image,
+ animation_url: animationUrl,
+ attributes: [
+ ...(parseTraits(input.traits) ?? []),
+ { trait_type: "Platform", value: "Orbit Copilot" },
+ { trait_type: "Standard", value: "SEP-50" },
+ ],
+ };
+ const stored = await storeNftMetadata({
+ walletPublicKey: input.walletAddress,
+ collectionContract: contractId,
+ metadata: meta,
+ });
+ uri = stored.uri.slice(0, 200);
+ }
+
  const built = await buildContractInvoke({
  sourcePublicKey: input.walletAddress,
  contractId,
@@ -65,9 +228,10 @@ export async function prepareNftMint(input: {
  type: "nft_mint" as const,
  name,
  metadataUri: uri,
+ collectionContract: contractId,
  xdr: built.xdr,
  networkPassphrase: built.networkPassphrase,
- message: `Mint NFT "${name}" to your wallet. Sign to confirm.`,
+ message: `Mint NFT "${name}" (SEP-50 metadata ready). Sign to confirm.`,
  };
 }
 
@@ -75,8 +239,9 @@ export async function prepareNftList(input: {
  walletAddress: string;
  tokenId: number;
  priceXlm: string;
+ collectionContract?: string;
 }) {
- const contractId = requireNftContract();
+ const contractId = resolveCollectionId(input.collectionContract);
  const { Address, nativeToScVal } = await import("@stellar/stellar-sdk");
  const price = toStroops(input.priceXlm);
 
@@ -95,17 +260,45 @@ export async function prepareNftList(input: {
  type: "nft_list" as const,
  tokenId: input.tokenId,
  priceXlm: input.priceXlm,
+ collectionContract: contractId,
  xdr: built.xdr,
  networkPassphrase: built.networkPassphrase,
  message: `List NFT #${input.tokenId} for ${input.priceXlm} XLM. Sign to list.`,
  };
 }
 
+export async function prepareNftCancelListing(input: {
+ walletAddress: string;
+ tokenId: number;
+ collectionContract?: string;
+}) {
+ const contractId = resolveCollectionId(input.collectionContract);
+ const { Address, nativeToScVal } = await import("@stellar/stellar-sdk");
+ const built = await buildContractInvoke({
+ sourcePublicKey: input.walletAddress,
+ contractId,
+ method: "cancel_listing",
+ args: [
+ Address.fromString(input.walletAddress).toScVal(),
+ nativeToScVal(input.tokenId, { type: "u32" }),
+ ],
+ });
+ return {
+ type: "nft_cancel" as const,
+ tokenId: input.tokenId,
+ collectionContract: contractId,
+ xdr: built.xdr,
+ networkPassphrase: built.networkPassphrase,
+ message: `Cancel listing for NFT #${input.tokenId}. Sign to confirm.`,
+ };
+}
+
 export async function prepareNftBuy(input: {
  walletAddress: string;
  tokenId: number;
+ collectionContract?: string;
 }) {
- const contractId = requireNftContract();
+ const contractId = resolveCollectionId(input.collectionContract);
  const { Address, nativeToScVal } = await import("@stellar/stellar-sdk");
 
  const built = await buildContractInvoke({
@@ -121,6 +314,7 @@ export async function prepareNftBuy(input: {
  return {
  type: "nft_buy" as const,
  tokenId: input.tokenId,
+ collectionContract: contractId,
  xdr: built.xdr,
  networkPassphrase: built.networkPassphrase,
  message: `Buy NFT #${input.tokenId} with XLM. Sign to purchase.`,
@@ -131,8 +325,9 @@ export async function prepareNftTransfer(input: {
  walletAddress: string;
  tokenId: number;
  to: string;
+ collectionContract?: string;
 }) {
- const contractId = requireNftContract();
+ const contractId = resolveCollectionId(input.collectionContract);
  const { Address, nativeToScVal } = await import("@stellar/stellar-sdk");
 
  const built = await buildContractInvoke({
@@ -150,6 +345,7 @@ export async function prepareNftTransfer(input: {
  type: "nft_transfer" as const,
  tokenId: input.tokenId,
  destination: input.to,
+ collectionContract: contractId,
  xdr: built.xdr,
  networkPassphrase: built.networkPassphrase,
  message: `Transfer NFT #${input.tokenId} to ${input.to.slice(0, 8)}… Sign to send.`,
@@ -158,21 +354,25 @@ export async function prepareNftTransfer(input: {
 
 export async function formatNftCatalog(): Promise<string> {
  const id = process.env.ORBIT_NFT_CONTRACT_ID?.trim();
+ const factory = process.env.ORBIT_NFT_FACTORY_CONTRACT_ID?.trim();
  return [
- "Orbit NFT marketplace (Soroban):",
+ "Orbit NFT launchpad (SEP-50 + OpenSea-style metadata, Soroban testnet):",
  "",
- "• Beta reward: submit feedback (heart) → auto-mint \"Orbit Co-Pilot Beta tester\" (max 7777)",
- "• Or chat: \"i have submitted my feedback, mint my beta tester nft\"",
- "• Mint: \"mint an NFT called Stellar Fox\"",
- "• List: \"list NFT #1 for 5 XLM\"",
- "• Buy: \"buy NFT #1\"",
- "• Transfer: \"transfer NFT #1 to G…\"",
- "• Holdings: \"view my NFTs\" / \"my NFTs\"",
+ "• Create collection: \"create NFT collection Orbit Foxes symbol FOX\"",
+ "• Mint with metadata: \"mint an NFT called Stellar Fox image https://… traits Background=Nebula\"",
+ "• Beta reward: feedback (heart) → \"claim my beta NFT\"",
+ "• List / buy / transfer: \"list NFT #1 for 5 XLM\" · \"buy NFT #1\" · \"transfer NFT #1 to G…\"",
+ "• Cancel listing: \"cancel listing NFT #1\"",
+ "• Holdings: \"view my NFTs\"",
  "",
- id?.startsWith("C")
- ? `Contract: ${id}`
- : "Deploy contracts/orbit-nft and set ORBIT_NFT_CONTRACT_ID=C…",
- `Settlement token: native XLM SAC (${NATIVE_XLM_SAC.slice(0, 8)}…)`,
+ "Standard: SEP-50 (name/symbol/token_uri/approve/transfer) — Freighter-compatible.",
+ id?.startsWith("C") ? `Default collection: ${id}` : "Deploy orbit-nft → ORBIT_NFT_CONTRACT_ID",
+ factory?.startsWith("C")
+ ? `Factory: ${factory}`
+ : nftFactoryConfigured()
+ ? ""
+ : "Factory optional: deploy orbit-nft-factory → ORBIT_NFT_FACTORY_CONTRACT_ID",
+ `Settlement: native XLM SAC (${NATIVE_XLM_SAC.slice(0, 8)}…)`,
  ].join("\n");
 }
 
