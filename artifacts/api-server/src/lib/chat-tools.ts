@@ -78,7 +78,7 @@ export async function formatSteldexPools(): Promise<string> {
  "Pools:",
  ...lines,
  "",
- 'Examples: "Swap 10 XLM to pUSDC", "add liquidity 10 XLM and 10 pUSDC", "stake XLM/pUSDC for 52 weeks".',
+ 'Examples: "Swap 10 XLM to pUSDC", "add liquidity 10 XLM and 10 pUSDC", "stake XLM/pUSDC for 12 weeks".',
  ].join("\n");
 }
 

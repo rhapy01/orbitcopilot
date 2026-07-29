@@ -2,6 +2,8 @@
  * Pending action clarify — when a user asks to swap/send/supply without an amount,
  * or add liquidity with only one asset amount, we ask for the missing piece and
  * complete on the next turn.
+ *
+ * Also tracks the last proposed LP card so the user can say "change to 4 USDC".
  */
 
 export type PendingActionKind =
@@ -12,7 +14,8 @@ export type PendingActionKind =
   | "withdraw"
   | "borrow"
   | "repay"
-  | "add_liquidity";
+  | "add_liquidity"
+  | "stake";
 
 export type PendingActionClarify = {
   kind: PendingActionKind;
@@ -28,7 +31,20 @@ export type PendingActionClarify = {
   createdAt: number;
 };
 
+/** Last LP card shown — allows "change to 4 USDC" without retyping the full intent. */
+export type RevisableLpAction = {
+  protocol: "steldex" | "soroswap";
+  symbol0: string;
+  symbol1: string;
+  amount0: string;
+  amount1: string;
+  /** Side the user originally sized (anchor for AUTO ratio). */
+  anchorAsset: string;
+  createdAt: number;
+};
+
 const pending = new Map<string, PendingActionClarify>();
+const revisableLp = new Map<string, RevisableLpAction>();
 const PENDING_TTL_MS = 15 * 60 * 1000;
 
 export function pendingActionKey(publicKey: string | null, sessionId?: number): string {
@@ -56,6 +72,82 @@ export function getPendingAction(key: string): PendingActionClarify | null {
     return null;
   }
   return p;
+}
+
+export function setRevisableLp(
+  key: string,
+  value: Omit<RevisableLpAction, "createdAt">
+): void {
+  revisableLp.set(key, { ...value, createdAt: Date.now() });
+}
+
+export function clearRevisableLp(key: string): void {
+  revisableLp.delete(key);
+}
+
+export function getRevisableLp(key: string): RevisableLpAction | null {
+  const p = revisableLp.get(key);
+  if (!p) return null;
+  if (Date.now() - p.createdAt > PENDING_TTL_MS) {
+    revisableLp.delete(key);
+    return null;
+  }
+  return p;
+}
+
+/**
+ * "change to 4", "change it to 4 usdc", "make it 4", "use 4 instead", "4 usdc instead"
+ */
+export function parseReviseAmount(content: string): {
+  amount: string;
+  assetHint?: string;
+} | null {
+  const t = content.trim();
+  const patterns = [
+    /\b(?:change|update|set|make|revise|adjust)(?:\s+it)?(?:\s+(?:the\s+)?(?:amount|size))?(?:\s+to)?\s+([\d]+(?:\.[\d]+)?)\s*([a-zA-Z]{2,12})?\b/i,
+    /\b(?:use|try)\s+([\d]+(?:\.[\d]+)?)\s*([a-zA-Z]{2,12})?\s+instead\b/i,
+    /^([\d]+(?:\.[\d]+)?)\s*([a-zA-Z]{2,12})?\s+instead\b/i,
+    /\binstead\s+(?:use\s+)?([\d]+(?:\.[\d]+)?)\s*([a-zA-Z]{2,12})?\b/i,
+  ];
+  for (const re of patterns) {
+    const m = t.match(re);
+    if (m?.[1] && Number(m[1]) > 0) {
+      return { amount: m[1], assetHint: m[2]?.toUpperCase() };
+    }
+  }
+  return null;
+}
+
+/** Rebuild one-sided LP intent after amount revise. */
+export function synthesizeLpReviseIntent(
+  lp: RevisableLpAction,
+  amount: string,
+  assetHint?: string
+): string | null {
+  const amt = amount.trim();
+  if (!amt || !Number.isFinite(Number(amt)) || Number(amt) <= 0) return null;
+
+  const norm = (s: string) => {
+    const u = s.trim().toUpperCase();
+    if (u === "USDC" || u === "CUSDC") return "CUSDC";
+    if (u === "PUSDC") return "PUSDC";
+    return u;
+  };
+
+  let anchor = lp.anchorAsset;
+  if (assetHint) {
+    const hint = norm(assetHint);
+    const s0 = norm(lp.symbol0);
+    const s1 = norm(lp.symbol1);
+    if (hint === s0) anchor = lp.symbol0;
+    else if (hint === s1) anchor = lp.symbol1;
+    else return null;
+  }
+
+  const other =
+    norm(anchor) === norm(lp.symbol0) ? lp.symbol1 : lp.symbol0;
+  const proto = lp.protocol || "steldex";
+  return `add liquidity ${amt} ${anchor} and AUTO ${other} on ${proto}`;
 }
 
 /** Extract a positive amount from a short follow-up like "50", "50 XLM", "swap 100". */
@@ -95,6 +187,22 @@ export function parseFollowUpAsset(content: string, knownAsset?: string): string
     if (known && a === known) return b;
     if (known && b === known) return a;
     return b; // default: treat second as the pair asset
+  }
+  return null;
+}
+
+/** Extract lock weeks from follow-ups like "12", "12 weeks", "for 4 weeks". */
+export function parseFollowUpWeeks(content: string): number | null {
+  const t = content.trim();
+  let m = t.match(/^(\d{1,3})\s*(?:weeks?|wks?|w)?\.?$/i);
+  if (m) {
+    const n = parseInt(m[1]!, 10);
+    if (n >= 1 && n <= 156) return n;
+  }
+  m = t.match(/\b(?:for|lock|stake)?\s*(\d{1,3})\s*(?:weeks?|wks?)\b/i);
+  if (m) {
+    const n = parseInt(m[1]!, 10);
+    if (n >= 1 && n <= 156) return n;
   }
   return null;
 }
@@ -142,6 +250,13 @@ export function synthesizeIntentFromPending(
     case "repay": {
       const asset = pendingAction.asset || assetHint || "USDC";
       return `repay ${amt} ${asset} on blend`;
+    }
+    case "stake": {
+      const a = pendingAction.fromAsset;
+      const b = pendingAction.toAsset;
+      if (!a || !b) return null;
+      const weeks = Math.min(156, Math.max(1, Math.floor(Number(amt))));
+      return `stake ${a}/${b} for ${weeks} weeks`;
     }
     case "add_liquidity":
       // Amount follow-up for LP is unusual; prefer asset follow-up via synthesizeLpIntentFromPending
@@ -191,6 +306,16 @@ export function clarifyPrompt(pendingAction: PendingActionClarify): string {
         pendingAction.promptHint ||
         `Which second asset should pair with **${pendingAction.amount || "?"} ${pendingAction.asset || "USDC"}** on the liquidity pool?\n\nReply with an asset code, e.g. \`XLM\` or \`pUSDC\` (I'll calculate the matching amount from the pool ratio).`
       );
+    case "stake": {
+      const pair =
+        pendingAction.fromAsset && pendingAction.toAsset
+          ? `${pendingAction.fromAsset}/${pendingAction.toAsset}`
+          : "your LP";
+      return (
+        pendingAction.promptHint ||
+        `How many weeks do you want to lock **${pair}** on the StelDex farm?\n\nReply with a number, e.g. \`4\`, \`12 weeks\`, or \`52 weeks\` (1–156).`
+      );
+    }
     default:
       return "How much would you like to use? Reply with an amount (e.g. `50`).";
   }

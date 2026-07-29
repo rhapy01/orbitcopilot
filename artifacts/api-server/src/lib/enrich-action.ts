@@ -260,6 +260,11 @@ export async function enrichChatAction(
     }
     if (!pool) return null;
 
+    if (type === "steldex_stake") {
+      const n = Number(raw.lockWeeks);
+      if (!Number.isFinite(n) || n < 1) return null; // require explicit weeks
+    }
+
     let outAmount = sendAmount;
     let outAmountB = amountB;
     if (type === "steldex_add_liquidity" && sendAmount && a && b) {
@@ -316,7 +321,13 @@ export async function enrichChatAction(
       tickLower: STELDEX_FULL_RANGE.tickLower,
       tickUpper: STELDEX_FULL_RANGE.tickUpper,
       liquidity,
-      lockWeeks: type === "steldex_stake" ? 52 : undefined,
+      lockWeeks:
+        type === "steldex_stake"
+          ? (() => {
+              const n = Number(raw.lockWeeks);
+              return Number.isFinite(n) && n >= 1 ? Math.min(156, Math.floor(n)) : undefined;
+            })()
+          : undefined,
     };
   }
 

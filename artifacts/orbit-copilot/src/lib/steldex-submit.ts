@@ -1,3 +1,5 @@
+import { xdr } from "@stellar/stellar-sdk";
+
 /**
  * Unicorn StelDex write flow (integration guide §5-6):
  * POST via our API proxy → sign each XDR in Freighter → submit to Soroban RPC → poll SUCCESS.
@@ -145,6 +147,83 @@ export function isTxTooLateError(message: string): boolean {
  );
 }
 
+/**
+ * Freighter builds older than Protocol 27 fail to decode SOROBAN_CREDENTIALS_ADDRESS_V2 (enum 2).
+ * Rewrite V2 auth entries to legacy ADDRESS (V1) so older wallets can still sign.
+ */
+export function downgradeSorobanAuthV2ToV1(xdrB64: string): string {
+ try {
+  const envelope = xdr.TransactionEnvelope.fromXDR(xdrB64, "base64");
+  const rewriteAuthList = (
+   auths: xdr.SorobanAuthorizationEntry[]
+  ): { next: xdr.SorobanAuthorizationEntry[]; changed: boolean } => {
+   let changed = false;
+   const next = auths.map((entry) => {
+    const creds = entry.credentials();
+    const sw = creds.switch();
+    const isV2 =
+     sw.value === 2 ||
+     String(sw.name || "").toLowerCase().includes("addressv2");
+    if (!isV2) return entry;
+    changed = true;
+    const addrCreds = (creds as { addressV2: () => xdr.SorobanAddressCredentials }).addressV2();
+    return new xdr.SorobanAuthorizationEntry({
+     credentials: xdr.SorobanCredentials.sorobanCredentialsAddress(addrCreds),
+     rootInvocation: entry.rootInvocation(),
+    });
+   });
+   return { next, changed };
+  };
+
+  let changed = false;
+
+  if (envelope.switch().name === "envelopeTypeTx") {
+   const tx = envelope.v1().tx();
+   for (const op of tx.operations()) {
+    const body = op.body();
+    if (body.switch().name !== "invokeHostFunction") continue;
+    const invoke = body.invokeHostFunctionOp();
+    const { next, changed: c } = rewriteAuthList(invoke.auth());
+    if (c) {
+     invoke.auth(next);
+     changed = true;
+    }
+   }
+  } else if (envelope.switch().name === "envelopeTypeTxFeeBump") {
+   const inner = envelope.feeBump().tx().innerTx();
+   if (inner.switch().name === "envelopeTypeTx") {
+    const tx = inner.v1().tx();
+    for (const op of tx.operations()) {
+     const body = op.body();
+     if (body.switch().name !== "invokeHostFunction") continue;
+     const invoke = body.invokeHostFunctionOp();
+     const { next, changed: c } = rewriteAuthList(invoke.auth());
+     if (c) {
+      invoke.auth(next);
+      changed = true;
+     }
+    }
+   }
+  }
+
+  return changed ? envelope.toXDR("base64") : xdrB64;
+ } catch {
+  return xdrB64;
+ }
+}
+
+export function explainWalletSignError(message: string): string {
+ const m = String(message || "");
+ if (
+  /SorobanCredentialsType/i.test(m) ||
+  /unknown.*credentials.*value\s*2/i.test(m) ||
+  /credentialsType.*2/i.test(m)
+ ) {
+  return "Wallet can't read Protocol 27 auth (ADDRESS_V2). Update Freighter to the latest version and try again — or use Orbit embedded wallet.";
+ }
+ return m;
+}
+
 export async function submitSignedToSoroban(signedXdr: string): Promise<string> {
  const send = await sorobanRpc("sendTransaction", { transaction: signedXdr });
  if (send.status === "ERROR") {
@@ -226,19 +305,28 @@ export async function buildAndSubmitSteldex(
  const label = step.label || step.id || "transaction";
  onProgress?.(`Preparing: ${label}`, stepCount);
 
- let xdr = step.xdr ?? undefined;
+ let stepXdr = step.xdr ?? undefined;
 
- if (!xdr && data.sequential && step.id) {
+ if (!stepXdr && data.sequential && step.id) {
  const stepData = await postSteldex(endpoint, { ...payload, stepId: step.id });
- xdr = stepData.xdr ?? undefined;
+ stepXdr = stepData.xdr ?? undefined;
  }
 
- if (!xdr) {
+ if (!stepXdr) {
  throw new Error(`No XDR for step ${step.id ?? label}`);
  }
 
+ // Older Freighter can't decode Protocol 27 ADDRESS_V2 auth — rewrite to V1.
+ const signableXdr = downgradeSorobanAuthV2ToV1(stepXdr);
+
  onProgress?.(`Sign with your wallet: ${label}`, stepCount);
- const signed = await signTx(xdr);
+ let signed: string;
+ try {
+  signed = await signTx(signableXdr);
+ } catch (err: unknown) {
+  const raw = err instanceof Error ? err.message : String(err);
+  throw new Error(explainWalletSignError(raw));
+ }
 
  onProgress?.(`Submitting: ${label}`, stepCount);
  lastHash = await submitSignedToSoroban(signed);

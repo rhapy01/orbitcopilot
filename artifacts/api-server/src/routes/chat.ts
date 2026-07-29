@@ -74,6 +74,7 @@ import {
   clarifyPrompt,
   clearPendingAction,
   getPendingAction,
+  getRevisableLp,
   INCOMPLETE_BORROW_RE,
   INCOMPLETE_DEPOSIT_RE,
   INCOMPLETE_REPAY_RE,
@@ -84,22 +85,29 @@ import {
   INCOMPLETE_WITHDRAW_RE,
   parseFollowUpAmount,
   parseFollowUpAsset,
+  parseFollowUpWeeks,
+  parseReviseAmount,
   pendingActionKey,
   setPendingAction,
+  setRevisableLp,
   synthesizeIntentFromPending,
   synthesizeLpIntentFromPending,
+  synthesizeLpReviseIntent,
 } from "../lib/pending-action";
 import {
+  askForCollectionBasics,
   askForCollectionDetails,
   askForCollectionMedia,
-  clearNftCollectionDraft,
   extractImageUrl,
-  getNftCollectionDraft,
+  isCollectionBasicsPrompt,
   isCancelWizard,
   isUploadIntent,
+  loadNftCollectionDraft,
   nftCollectionDraftKey,
+  parseCollectionBasicsReply,
   parseDetailsReply,
-  setNftCollectionDraft,
+  removeNftCollectionDraft,
+  saveNftCollectionDraft,
 } from "../lib/pending-nft-collection";
 import { isLpAutoAmount } from "../lib/defi-math";
 import { parseMultiSwapEach } from "../lib/multi-action";
@@ -110,15 +118,25 @@ import {
  preparePerpOpen,
 } from "../lib/perps";
 import {
+ formatCollectionMintStatus,
  formatNftCatalog,
+ getCollectionMintInfo,
  getNftHoldings,
  collectionPromptComplete,
+ collectionMintFieldsFromPrompt,
+ NFT_DEFAULT_ROYALTY_BPS,
  parseCollectionPromptFields,
+ parseMintPriceXlmFromText,
+ parseMaxMintPerWalletFromText,
  prepareNftBuy,
  prepareNftCancelListing,
  prepareNftList,
  prepareNftMint,
  prepareNftTransfer,
+ prepareSetAllowlistEntry,
+ prepareSetMintPrices,
+ prepareSetMintStages,
+ resolveCreatorCollection,
  type NftGalleryPayload,
 } from "../lib/nft";
 import {
@@ -151,6 +169,13 @@ import {
  NFT_CANCEL_RE,
  NFT_CLAIM_BETA_RE,
  NFT_CREATE_COLLECTION_RE,
+ NFT_ALLOWLIST_ADD_RE,
+ NFT_COLLECTION_CONTRACT_RE,
+ NFT_MINT_STATUS_RE,
+ NFT_OPEN_ALLOWLIST_MINT_RE,
+ NFT_OPEN_PUBLIC_MINT_RE,
+ NFT_SET_MINT_PRICE_RE,
+ isNftGalleryIntent,
  NFT_LIST_RE,
  NFT_MEDIA_PACK_RE,
  NFT_MINT_NEXT_RE,
@@ -197,7 +222,7 @@ const AI_RESPONSES = {
  connectWallet:
  "Connect Freighter or your Orbit embedded wallet using the button in the header so I can read balances and prepare transactions.",
  steldexHelp:
- "Unicorn StelDex (Testnet) - three different actions:\n\n1. Liquidity provision (one amount + pair — Orbit auto-sizes the other side):\n \"add 100 USDC to liquidity\" → pick pair (XLM or pUSDC)\n \"add 100 USDC and XLM to liquidity on StelDex\"\n\n2. Yield farming (stake the LP tokens you got from step 1):\n \"stake my XLM/pUSDC LP for 52 weeks\"\n\n3. Single-asset staking (where supported):\n Stake a single token to earn rewards.\n\nOther actions:\n \"remove liquidity XLM/pUSDC\"\n \"claim rewards from XLM/pUSDC\"\n \"unstake XLM/pUSDC\"\n \"swap 10 XLM to pUSDC\"\n \"what do I have on StelDex?\"",
+ "Unicorn StelDex (Testnet) - three different actions:\n\n1. Liquidity provision (one amount + pair — Orbit auto-sizes the other side):\n \"add 100 USDC to liquidity\" → pick pair (XLM or pUSDC)\n \"add 100 USDC and XLM to liquidity on StelDex\"\n\n2. Yield farming (stake the LP tokens you got from step 1):\n \"stake my XLM/pUSDC LP for 12 weeks\" (ask for weeks if omitted — never assume 52)\n\n3. Single-asset staking (where supported):\n Stake a single token to earn rewards.\n\nOther actions:\n \"remove liquidity XLM/pUSDC\"\n \"claim rewards from XLM/pUSDC\"\n \"unstake XLM/pUSDC\"\n \"swap 10 XLM to pUSDC\"\n \"what do I have on StelDex?\"",
  steldexPoolNotFound:
  "I couldn't find that pool on StelDex. Ask for a pair like XLM/pUSDC, XLM/cUSDC, EURC/XLM, or STELLAR/XLM.",
  noPosition:
@@ -393,6 +418,9 @@ interface ChatAction {
  | "nft_transfer"
  | "nft_cancel"
  | "nft_create_collection"
+ | "nft_set_mint_stages"
+ | "nft_set_mint_prices"
+ | "nft_allowlist"
  | "nft_media_pack"
  | "token_deploy"
  | "token_mint"
@@ -426,6 +454,11 @@ interface ChatAction {
  website?: string;
  maxSupply?: number;
  royaltyBps?: number;
+ publicMintPriceXlm?: string;
+ allowlistMintPriceXlm?: string;
+ maxMintPerWallet?: number;
+ allowlistActive?: boolean;
+ publicMintActive?: boolean;
  /** User explicitly set max supply (including 0 = unlimited). */
  supplySpecified?: boolean;
  mediaPackId?: string;
@@ -544,9 +577,18 @@ async function parseSteldexIntents(
  : ` Pool ratio OK (${pool.symbol0}/${pool.symbol1}).`
  : " (Could not verify pool ratio live - if the tx fails, amounts may be unbalanced.)";
 
+ setRevisableLp(pendingActionKey(publicKey, opts?.sessionId), {
+  protocol: "steldex",
+  symbol0: pool.symbol0,
+  symbol1: pool.symbol1,
+  amount0: final0,
+  amount1: final1,
+  anchorAsset: a,
+ });
+
  return {
  kind: "action",
- text: `Ready to add ${final0} ${pool.symbol0} and ${final1} ${pool.symbol1} to ${pool.pair} on StelDex (full-range).${ratioNote} Sign one step at a time with your connected wallet.`,
+ text: `Ready to add ${final0} ${pool.symbol0} and ${final1} ${pool.symbol1} to ${pool.pair} on StelDex (full-range).${ratioNote} Sign one step at a time with your connected wallet.\n\nWant a different size? Say e.g. \`change to 4 ${a}\`.`,
  action: {
  type: "steldex_add_liquidity",
  ...withFullRange(pool),
@@ -580,16 +622,27 @@ async function parseSteldexIntents(
  : " Pool ratio OK."
  : " (Could not verify pool ratio live - if the tx fails, amounts may be unbalanced.)";
 
+ const sa = symbolA!.toUpperCase();
+ const sb = symbolB!.toUpperCase();
+ setRevisableLp(pendingActionKey(publicKey, opts?.sessionId), {
+  protocol: "soroswap",
+  symbol0: sa,
+  symbol1: sb,
+  amount0: outA,
+  amount1: String(outB ?? amountB),
+  anchorAsset: sa,
+ });
+
  return {
  kind: "action",
- text: `Soroswap add liquidity: ${outA} ${symbolA!.toUpperCase()} + ${outB ?? amountB} ${symbolB!.toUpperCase()}.${ratioNote} Sign with your connected wallet.`,
+ text: `Soroswap add liquidity: ${outA} ${sa} + ${outB ?? amountB} ${sb}.${ratioNote} Sign with your connected wallet.\n\nWant a different size? Say e.g. \`change to 4 ${sa}\`.`,
  action: {
  type: "soroswap_add_liquidity",
  sendAmount: outA,
  amountB: outB ?? amountB!,
- sendAsset: symbolA!.toUpperCase(),
- destAsset: symbolB!.toUpperCase(),
- pair: `${symbolA!.toUpperCase()}/${symbolB!.toUpperCase()}`,
+ sendAsset: sa,
+ destAsset: sb,
+ pair: `${sa}/${sb}`,
  },
  };
  }
@@ -657,7 +710,6 @@ async function parseSteldexIntents(
  if (stakeMatch) {
  if (!publicKey) return { kind: "text", text: AI_RESPONSES.connectWallet };
  const [, symbolA, symbolB, weeksRaw] = stakeMatch;
- const lockWeeks = Math.min(156, Math.max(1, weeksRaw ? parseInt(weeksRaw, 10) : 52));
  const farmPools = (await getSteldexFarmPools(publicKey)) as any[];
  const match = findRowForPair(farmPools, symbolA, symbolB);
  const available = match?.availableToStake ?? match?.lpLiquidity;
@@ -667,9 +719,22 @@ async function parseSteldexIntents(
  text: "No LP available to stake for that pair. Add liquidity first, then stake.",
  };
  }
+ if (!weeksRaw) {
+  const pairParts = String(match.pair || `${symbolA}/${symbolB}`).split("/");
+  const key = pendingActionKey(publicKey, opts?.sessionId);
+  setPendingAction(key, {
+   kind: "stake",
+   fromAsset: pairParts[0] || symbolA!.toUpperCase(),
+   toAsset: pairParts[1] || symbolB!.toUpperCase(),
+   protocol: "steldex",
+   promptHint: `How many weeks do you want to lock **${match.pair}** on the StelDex farm?\n\nReply with a number, e.g. \`4\`, \`12 weeks\`, or \`52 weeks\` (1–156). Longer locks usually earn more rewards but your LP stays locked.`,
+  });
+  return { kind: "text", text: clarifyPrompt(getPendingAction(key)!) };
+ }
+ const lockWeeks = Math.min(156, Math.max(1, parseInt(weeksRaw, 10)));
  return {
  kind: "action",
- text: `I'll stake your available ${match.pair} LP for ${lockWeeks} weeks on the StelDex farm. Sign with your connected wallet.`,
+ text: `I'll stake your available ${match.pair} LP for **${lockWeeks} weeks** on the StelDex farm. Sign with your connected wallet.`,
  action: {
  type: "steldex_stake",
  poolContract: match.poolContract,
@@ -700,18 +765,33 @@ async function parseSteldexIntents(
  const match = (filtered[0] ?? stakeable[0]) as any;
  if (stakeable.length > 1 && !filtered[0]) {
  const poolList = stakeable.map((p: any) => p.pair).join(", ");
- return { kind: "text", text: `You have unstaked LP in multiple pools: ${poolList}. Which one do you want to stake? E.g. "stake XLM/pUSDC".` };
+ return { kind: "text", text: `You have unstaked LP in multiple pools: ${poolList}. Which one do you want to stake? E.g. "stake XLM/pUSDC for 12 weeks".` };
  }
+ // Also catch weeks if user said "stake my LP for 12 weeks"
+ const weeksFromText = content.match(/(\d+)\s*weeks?/i)?.[1];
+ if (!weeksFromText) {
+  const pairParts = String(match.pair || "").split("/");
+  const key = pendingActionKey(publicKey, opts?.sessionId);
+  setPendingAction(key, {
+   kind: "stake",
+   fromAsset: pairParts[0] || "XLM",
+   toAsset: pairParts[1] || "cUSDC",
+   protocol: "steldex",
+   promptHint: `How many weeks do you want to lock **${match.pair}** on the StelDex farm?\n\nReply with a number, e.g. \`4\`, \`12 weeks\`, or \`52 weeks\` (1–156). Longer locks usually earn more rewards but your LP stays locked.`,
+  });
+  return { kind: "text", text: clarifyPrompt(getPendingAction(key)!) };
+ }
+ const lockWeeks = Math.min(156, Math.max(1, parseInt(weeksFromText, 10)));
  return {
  kind: "action",
- text: `I'll stake your available ${match.pair} LP for 52 weeks on the StelDex farm. Sign with your connected wallet.`,
+ text: `I'll stake your available ${match.pair} LP for **${lockWeeks} weeks** on the StelDex farm. Sign with your connected wallet.`,
  action: {
  type: "steldex_stake",
  poolContract: match.poolContract,
  pair: match.pair,
  tickLower: match.tickLower ?? STELDEX_FULL_RANGE.tickLower,
  tickUpper: match.tickUpper ?? STELDEX_FULL_RANGE.tickUpper,
- lockWeeks: 52,
+ lockWeeks,
  },
  };
  }
@@ -969,8 +1049,23 @@ async function getDeterministicResponse(
  }
 
  // Follow-up after amount / LP-pair clarify: "50", "50 XLM", "xlm"
+ // Also: revise last LP card — "change to 4", "change it to 4 usdc"
  {
  const key = pendingActionKey(publicKey, sessionId);
+ const revise = parseReviseAmount(content);
+ if (revise) {
+  const lp = getRevisableLp(key);
+  if (lp) {
+   const synthetic = synthesizeLpReviseIntent(lp, revise.amount, revise.assetHint);
+   if (synthetic) {
+    return getDeterministicResponse(synthetic, publicKey, options);
+   }
+   return {
+    text: `I can resize the **${lp.symbol0}/${lp.symbol1}** LP. Say e.g. \`change to 4 ${lp.anchorAsset}\` (or name ${lp.symbol0} / ${lp.symbol1}).`,
+    action: null,
+   };
+  }
+ }
  const pendingAct = getPendingAction(key);
  if (pendingAct) {
  if (/^(cancel|nevermind|never\s*mind|stop|no)\s*!?\s*$/i.test(content.trim())) {
@@ -996,6 +1091,31 @@ async function getDeterministicResponse(
   if (content.trim().split(/\s+/).length <= 6) {
    return {
     text: `${clarifyPrompt(pendingAct)}\n\n(Reply with an asset like **XLM**, or say **cancel**.)`,
+    action: null,
+   };
+  }
+  clearPendingAction(key);
+ } else if (pendingAct.kind === "stake") {
+  const weeks =
+   parseFollowUpWeeks(content) ??
+   (() => {
+    const p = parseFollowUpAmount(content);
+    if (!p) return null;
+    // Reject "12 usdc"-style replies; allow bare "12" or "12 weeks"
+    if (p.assetHint && !/^weeks?$/i.test(p.assetHint)) return null;
+    const n = Math.floor(Number(p.amount));
+    return n >= 1 && n <= 156 ? n : null;
+   })();
+  if (weeks != null) {
+   clearPendingAction(key);
+   const synthetic = synthesizeIntentFromPending(pendingAct, String(weeks));
+   if (synthetic) {
+    return getDeterministicResponse(synthetic, publicKey, options);
+   }
+  }
+  if (content.trim().split(/\s+/).length <= 8) {
+   return {
+    text: `${clarifyPrompt(pendingAct)}\n\n(Reply with weeks, e.g. **4** or **12 weeks** — or say **cancel**.)`,
     action: null,
    };
   }
@@ -1028,14 +1148,94 @@ async function getDeterministicResponse(
  // Multi-turn NFT collection create wizard
  {
  const draftKey = nftCollectionDraftKey(publicKey, sessionId);
- const draft = getNftCollectionDraft(draftKey);
+ let draft = await loadNftCollectionDraft(draftKey);
+
+ // Recover wizard after serverless cold start (draft in Postgres or prior assistant turn)
+ if (!draft && sessionId) {
+ const prior = await listPriorChatTurns(sessionId, 4).catch(() => []);
+ const lastAssistant = [...prior].reverse().find((m) => m.role === "assistant");
+ if (lastAssistant && isCollectionBasicsPrompt(lastAssistant.content)) {
+ const parsed = parseCollectionBasicsReply(content);
+ if (parsed.nameSpecified) {
+ const nextBasics = {
+ name: parsed.name,
+ symbol: parsed.symbol,
+ maxSupply: parsed.maxSupply,
+ supplySpecified: parsed.supplySpecified,
+ royaltyBps: parsed.royaltyBps,
+ ...collectionMintFieldsFromPrompt(parsed),
+ step: "awaiting_details" as const,
+ };
+ await saveNftCollectionDraft(draftKey, nextBasics);
+ return { text: askForCollectionDetails({ ...nextBasics, createdAt: Date.now() }), action: null };
+ }
+ draft = {
+ name: "",
+ symbol: "",
+ maxSupply: 0,
+ supplySpecified: false,
+ royaltyBps: NFT_DEFAULT_ROYALTY_BPS,
+ step: "awaiting_basics",
+ createdAt: Date.now(),
+ };
+ await saveNftCollectionDraft(draftKey, draft);
+ }
+ }
+
  if (draft) {
  if (isCancelWizard(content)) {
- clearNftCollectionDraft(draftKey);
+ await removeNftCollectionDraft(draftKey);
  return { text: "Cancelled collection setup — say when you want to start again.", action: null };
  }
  // Starting a new collection replaces the draft (handled below via regex)
  if (!NFT_CREATE_COLLECTION_RE.test(content)) {
+ if (draft.step === "awaiting_basics") {
+ const parsed = parseCollectionBasicsReply(content);
+ if (parsed.nameSpecified) {
+ const nextBasics = {
+ name: parsed.name,
+ symbol: parsed.symbol,
+ maxSupply: parsed.maxSupply,
+ supplySpecified: parsed.supplySpecified,
+ royaltyBps: parsed.royaltyBps,
+ description: draft.description,
+ website: draft.website,
+ step: "awaiting_details" as const,
+ };
+ await saveNftCollectionDraft(draftKey, nextBasics);
+ return { text: askForCollectionDetails({ ...nextBasics, createdAt: Date.now() }), action: null };
+ }
+
+ const synthetic = `create collection ${content}`;
+ const basicsMatch = synthetic.match(NFT_CREATE_COLLECTION_RE);
+ if (!basicsMatch) {
+ return {
+ text: `${askForCollectionBasics()}\n\n(Need a collection name — e.g. "Cloud Explorer, supply 777, symbol CER".)`,
+ action: null,
+ };
+ }
+ const basicsFields = parseCollectionPromptFields(synthetic, basicsMatch);
+ if (!basicsFields.nameSpecified) {
+ return {
+ text: `${askForCollectionBasics()}\n\n(Need a collection name — e.g. "Cloud Explorer, supply 777, symbol CER".)`,
+ action: null,
+ };
+ }
+ const nextBasics = {
+ name: basicsFields.name,
+ symbol: basicsFields.symbol,
+ maxSupply: basicsFields.maxSupply,
+ supplySpecified: basicsFields.supplySpecified,
+ royaltyBps: basicsFields.royaltyBps,
+ description: basicsFields.description,
+ website: basicsFields.website,
+ ...collectionMintFieldsFromPrompt(basicsFields),
+ step: "awaiting_details" as const,
+ };
+ await saveNftCollectionDraft(draftKey, nextBasics);
+ return { text: askForCollectionDetails({ ...nextBasics, createdAt: Date.now() }), action: null };
+ }
+
  if (draft.step === "awaiting_details") {
  const details = parseDetailsReply(content);
  const supplyInReply = content.match(
@@ -1067,7 +1267,7 @@ async function getDeterministicResponse(
  maxSupply,
  step: "awaiting_media" as const,
  };
- setNftCollectionDraft(draftKey, next);
+ await saveNftCollectionDraft(draftKey, next);
  return { text: askForCollectionMedia(next), action: null };
  }
 
@@ -1080,7 +1280,7 @@ async function getDeterministicResponse(
  action: null,
  };
  }
- clearNftCollectionDraft(draftKey);
+ await removeNftCollectionDraft(draftKey);
  const traitsNote = draft.traits
  ? `\nTraits / rarity: ${draft.traits}`
  : "";
@@ -1106,6 +1306,7 @@ async function getDeterministicResponse(
  maxSupply: draft.maxSupply,
  royaltyBps: draft.royaltyBps,
  supplySpecified: draft.supplySpecified,
+ ...collectionMintFieldsFromPrompt(draft),
  } as ChatAction,
  };
  }
@@ -1575,17 +1776,9 @@ async function getDeterministicResponse(
  }
  }
 
- // NFT gallery - only when user asks to view holdings (not mint/claim)
+ // NFT gallery - only when user asks to view holdings (not create/mint/list/buy)
  {
- const wantsGallery =
- /\b(?:view|show|see|list)\b[\s\w]{0,24}\b(?:my\s+)?nfts?\b/i.test(content) ||
- /\bmy\s+nfts?\b/i.test(content) ||
- /\b(?:nft|nfts|collectibles?)\b[\s\w]{0,24}\b(?:holdings?|collection)\b/i.test(content) ||
- /\b(?:holdings?|collection)\b[\s\w]{0,24}\b(?:nft|nfts)\b/i.test(content);
- const isMintOrClaim =
- /\bmint\b/i.test(content) || /\bclaim\b/i.test(content);
-
- if (wantsGallery && !isMintOrClaim) {
+ if (isNftGalleryIntent(content)) {
  if (!publicKey) return { text: AI_RESPONSES.connectWallet, action: null };
  try {
  const { text, gallery } = await getNftHoldings(publicKey);
@@ -1614,9 +1807,21 @@ async function getDeterministicResponse(
  const fields = parseCollectionPromptFields(content, createCollection);
  const draftKey = nftCollectionDraftKey(publicKey, sessionId);
 
+ if (!fields.nameSpecified) {
+ await saveNftCollectionDraft(draftKey, {
+ name: "",
+ symbol: "",
+ maxSupply: 0,
+ supplySpecified: false,
+ royaltyBps: fields.royaltyBps,
+ step: "awaiting_basics",
+ });
+ return { text: askForCollectionBasics(), action: null };
+ }
+
  // Full one-shot prompt → action card immediately
  if (collectionPromptComplete(fields)) {
- clearNftCollectionDraft(draftKey);
+ await removeNftCollectionDraft(draftKey);
  return {
  text: [
  `Ready to create **${fields.name}** (${fields.symbol}).`,
@@ -1634,6 +1839,7 @@ async function getDeterministicResponse(
  maxSupply: fields.maxSupply,
  royaltyBps: fields.royaltyBps,
  supplySpecified: true,
+ ...collectionMintFieldsFromPrompt(fields),
  } as ChatAction,
  };
  }
@@ -1642,7 +1848,7 @@ async function getDeterministicResponse(
  const hasDetails = Boolean(fields.description?.trim());
  const hasMedia = Boolean(fields.image?.trim());
  if (hasDetails && !hasMedia) {
- setNftCollectionDraft(draftKey, {
+ await saveNftCollectionDraft(draftKey, {
  name: fields.name,
  symbol: fields.symbol,
  maxSupply: fields.maxSupply,
@@ -1668,7 +1874,7 @@ async function getDeterministicResponse(
  };
  }
 
- setNftCollectionDraft(draftKey, {
+ await saveNftCollectionDraft(draftKey, {
  name: fields.name,
  symbol: fields.symbol,
  maxSupply: fields.maxSupply,
@@ -1824,6 +2030,126 @@ async function getDeterministicResponse(
  supplySpecified: Boolean(expectedCount),
  } as ChatAction,
  };
+ }
+
+ {
+ const contractHint = content.match(NFT_COLLECTION_CONTRACT_RE)?.[1];
+ if (NFT_MINT_STATUS_RE.test(content)) {
+ if (!publicKey) return { text: AI_RESPONSES.connectWallet, action: null };
+ try {
+ const collection = await resolveCreatorCollection(publicKey, contractHint);
+ return { text: await formatCollectionMintStatus(collection, publicKey), action: null };
+ } catch (err: any) {
+ return { text: err?.message ?? "Mint status unavailable", action: null };
+ }
+ }
+
+ if (NFT_OPEN_PUBLIC_MINT_RE.test(content)) {
+ if (!publicKey) return { text: AI_RESPONSES.connectWallet, action: null };
+ try {
+ const collection = await resolveCreatorCollection(publicKey, contractHint);
+ const staged = await prepareSetMintStages({
+ walletAddress: publicKey,
+ collectionContract: collection,
+ allowlistActive: false,
+ publicMintActive: true,
+ });
+ return {
+ text: staged.message,
+ action: {
+ type: "nft_set_mint_stages",
+ collectionContract: collection,
+ xdr: staged.xdr,
+ networkPassphrase: staged.networkPassphrase,
+ } as ChatAction,
+ };
+ } catch (err: any) {
+ return { text: err?.message ?? "Could not open public mint", action: null };
+ }
+ }
+
+ if (NFT_OPEN_ALLOWLIST_MINT_RE.test(content)) {
+ if (!publicKey) return { text: AI_RESPONSES.connectWallet, action: null };
+ try {
+ const collection = await resolveCreatorCollection(publicKey, contractHint);
+ const staged = await prepareSetMintStages({
+ walletAddress: publicKey,
+ collectionContract: collection,
+ allowlistActive: true,
+ publicMintActive: false,
+ });
+ return {
+ text: staged.message,
+ action: {
+ type: "nft_set_mint_stages",
+ collectionContract: collection,
+ xdr: staged.xdr,
+ networkPassphrase: staged.networkPassphrase,
+ } as ChatAction,
+ };
+ } catch (err: any) {
+ return { text: err?.message ?? "Could not open allowlist mint", action: null };
+ }
+ }
+
+ const setMintPrice = content.match(NFT_SET_MINT_PRICE_RE);
+ if (setMintPrice?.[1]) {
+ if (!publicKey) return { text: AI_RESPONSES.connectWallet, action: null };
+ try {
+ const collection = await resolveCreatorCollection(publicKey, contractHint);
+ const price = setMintPrice[1];
+ const isAllowlist = /\ballowlist\b|\bpresale\b|\bprivate\b/i.test(content);
+ const current = await getCollectionMintInfo(collection);
+ const updated = await prepareSetMintPrices({
+ walletAddress: publicKey,
+ collectionContract: collection,
+ publicMintPriceXlm: isAllowlist ? current.publicMintPriceXlm : price,
+ allowlistMintPriceXlm: isAllowlist ? price : current.allowlistMintPriceXlm,
+ maxMintPerWallet: parseMaxMintPerWalletFromText(content) ?? current.maxMintPerWallet,
+ });
+ return {
+ text: updated.message,
+ action: {
+ type: "nft_set_mint_prices",
+ collectionContract: collection,
+ publicMintPriceXlm: updated.publicMintPriceXlm,
+ allowlistMintPriceXlm: updated.allowlistMintPriceXlm,
+ maxMintPerWallet: updated.maxMintPerWallet,
+ xdr: updated.xdr,
+ networkPassphrase: updated.networkPassphrase,
+ } as ChatAction,
+ };
+ } catch (err: any) {
+ return { text: err?.message ?? "Could not set mint price", action: null };
+ }
+ }
+
+ const allowAdd = content.match(NFT_ALLOWLIST_ADD_RE);
+ if (allowAdd?.[1]) {
+ if (!publicKey) return { text: AI_RESPONSES.connectWallet, action: null };
+ try {
+ const collection = await resolveCreatorCollection(publicKey, contractHint);
+ const entry = await prepareSetAllowlistEntry({
+ walletAddress: publicKey,
+ collectionContract: collection,
+ allowWallet: allowAdd[1],
+ maxMints: allowAdd[2] ? parseInt(allowAdd[2], 10) : undefined,
+ customPriceXlm: allowAdd[3],
+ });
+ return {
+ text: entry.message,
+ action: {
+ type: "nft_allowlist",
+ collectionContract: collection,
+ destination: allowAdd[1],
+ xdr: entry.xdr,
+ networkPassphrase: entry.networkPassphrase,
+ } as ChatAction,
+ };
+ } catch (err: any) {
+ return { text: err?.message ?? "Allowlist update failed", action: null };
+ }
+ }
  }
 
  const nftMint = content.match(NFT_MINT_RE);
@@ -2781,12 +3107,12 @@ async function getAiResponse(
  ) {
  // Allow deterministic text-only replies for predict clarify / LP pair / list / errors
  const looksLikeActionText =
- /several markets match|orbit predict|no market matched|prepared \d+ swaps|on-chain prediction|how many|reply with an amount|still need a number|i’ll prepare an|i'll prepare an|wallets are already funded|second asset|pair with|reply with an asset|liquidity pool|matching amount from the (?:live )?pool|got it —|collection description|add \*\*collection artwork\*\*|paste an image url|say \*\*upload\*\*|cancelled collection setup|all set —|media pack upload ready|pack ready/i.test(
+ /several markets match|orbit predict|no market matched|prepared \d+ swaps|on-chain prediction|how many|reply with an amount|still need a number|i’ll prepare an|i'll prepare an|wallets are already funded|second asset|pair with|reply with an asset|liquidity pool|matching amount from the (?:live )?pool|want a different size|change to \d+|how many weeks|lock \*\*|steldex farm|got it —|let'?s create your nft collection|collection name|need a collection name|collection description|add \*\*collection artwork\*\*|paste an image url|say \*\*upload\*\*|cancelled collection setup|all set —|media pack upload ready|pack ready/i.test(
  actionPass.text
  ) || actionPass.pendingPredict;
  // LP pair clarify / NFT collection wizard — never let the LLM override
  const pendingLp = getPendingAction(pendingActionKey(publicKey, opts?.sessionId));
- const pendingNft = getNftCollectionDraft(
+ const pendingNft = await loadNftCollectionDraft(
  nftCollectionDraftKey(publicKey, opts?.sessionId)
  );
  if (
@@ -3065,9 +3391,10 @@ router.post("/chat/messages", async (req, res): Promise<void> => {
  sendEvent({ type: "session", sessionId });
 
  try {
- const { text: aiContent, action, actions, gallery } = await timed("chat.respond", () =>
+ const { text: aiContentRaw, action, actions, gallery } = await timed("chat.respond", () =>
  getAiResponse(bodyParsed.data.content, publicKey, { sessionId })
  );
+ const aiContent = aiContentRaw?.trim() || "Sorry — I couldn't finish that reply. Please try again.";
 
  // Stream text in ~40-char chunks for a typing effect
  const chunkSize = 40;

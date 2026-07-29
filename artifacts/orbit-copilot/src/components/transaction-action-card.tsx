@@ -95,6 +95,9 @@ export interface ChatAction {
  | "nft_transfer"
  | "nft_cancel"
  | "nft_create_collection"
+ | "nft_set_mint_stages"
+ | "nft_set_mint_prices"
+ | "nft_allowlist"
  | "nft_media_pack"
  | "token_deploy"
  | "token_mint"
@@ -154,6 +157,11 @@ export interface ChatAction {
  bannerImageDataUrl?: string;
  maxSupply?: number;
  royaltyBps?: number;
+ publicMintPriceXlm?: string;
+ allowlistMintPriceXlm?: string;
+ maxMintPerWallet?: number;
+ allowlistActive?: boolean;
+ publicMintActive?: boolean;
  /** User explicitly set max supply (including 0 = unlimited). */
  supplySpecified?: boolean;
  mediaPackId?: string;
@@ -344,7 +352,41 @@ async function rebuildOrbitNativeXdr(
  maxSupply: action.maxSupply ?? 0,
  openMint: true,
  royaltyBps: action.royaltyBps ?? 250,
+ publicMintPriceXlm: action.publicMintPriceXlm ?? "0",
+ allowlistMintPriceXlm: action.allowlistMintPriceXlm,
+ maxMintPerWallet: action.maxMintPerWallet ?? 0,
+ allowlistActive: action.allowlistActive === true,
+ publicMintActive: action.publicMintActive !== false,
  mediaPackId: action.mediaPackId,
+ };
+ break;
+ case "nft_set_mint_stages":
+ endpoint = "/api/nft/set-mint-stages";
+ body = {
+ ...body,
+ collectionContract: action.collectionContract,
+ allowlistActive: action.allowlistActive === true,
+ publicMintActive: action.publicMintActive !== false,
+ };
+ break;
+ case "nft_set_mint_prices":
+ endpoint = "/api/nft/set-mint-prices";
+ body = {
+ ...body,
+ collectionContract: action.collectionContract,
+ publicMintPriceXlm: action.publicMintPriceXlm ?? "0",
+ allowlistMintPriceXlm: action.allowlistMintPriceXlm ?? "0",
+ maxMintPerWallet: action.maxMintPerWallet,
+ };
+ break;
+ case "nft_allowlist":
+ endpoint = "/api/nft/allowlist";
+ body = {
+ ...body,
+ collectionContract: action.collectionContract,
+ allowWallet: action.destination,
+ maxMints: action.maxSupply,
+ customPriceXlm: action.priceXlm,
  };
  break;
  case "nft_cancel":
@@ -590,6 +632,12 @@ function actionTitle(action: ChatAction): string {
  return "Mint NFT (SEP-50)";
  case "nft_create_collection":
  return "Create NFT Collection";
+ case "nft_set_mint_stages":
+ return "Set Mint Stage";
+ case "nft_set_mint_prices":
+ return "Set Mint Prices";
+ case "nft_allowlist":
+ return "Allowlist Wallet";
  case "nft_media_pack":
  return "Upload Media Pack";
  case "nft_cancel":
@@ -721,12 +769,19 @@ function buildSteldexBody(action: ChatAction, slippageBps = 50): Record<string, 
  }
  case "steldex_stake": {
  if (!action.poolContract) throw new Error("Missing pool");
+ if (
+  action.lockWeeks == null ||
+  !Number.isFinite(action.lockWeeks) ||
+  action.lockWeeks < 1
+ ) {
+  throw new Error("Choose how many weeks to lock (1–156) before staking");
+ }
  return {
  poolContract: action.poolContract,
  tickLower,
  tickUpper,
  stakeMax: true,
- lockWeeks: action.lockWeeks ?? 52,
+ lockWeeks: Math.min(156, Math.floor(action.lockWeeks)),
  autoCompound: false,
  };
  }
@@ -783,10 +838,16 @@ function isSwapFamily(type: ChatAction["type"]): boolean {
  );
 }
 
+export type CompletedOutcome = {
+ hash: string | null;
+ summary: string;
+};
+
 export function TransactionActionCard({
  action: initialAction,
  queue,
  beforeIdle,
+ completed: initialCompleted,
  onOutcome,
  onContinue,
 }: {
@@ -794,10 +855,14 @@ export function TransactionActionCard({
  /** When length > 1, one progressive card advances through each action after success. */
  queue?: ChatAction[];
  beforeIdle?: string | null;
+ /** When set, card is read-only receipt (survives remounts). */
+ completed?: CompletedOutcome | null;
   onOutcome?: (info: {
     hash: string | null;
     summary: string;
     teach?: TeachLesson | null;
+    /** True when the full card flow is done (not mid-queue). */
+    terminal?: boolean;
   }) => void;
  /** Called with a follow-up prompt when a chained action should continue */
  onContinue?: (prompt: string) => void;
@@ -813,15 +878,16 @@ export function TransactionActionCard({
  const [stepIndex, setStepIndex] = useState(0);
  const [stepHashes, setStepHashes] = useState<(string | null)[]>([]);
  const [planComplete, setPlanComplete] = useState(false);
+ const [actionComplete, setActionComplete] = useState(Boolean(initialCompleted));
 
  // After enabling an asset, morph into the pending swap/send without a new chat turn
  const [action, setAction] = useState<ChatAction>(() =>
  steps ? steps[0]! : initialAction
  );
  useEffect(() => {
- if (steps) return; // queue progress owns action state
+ if (steps || actionComplete) return; // queue progress owns action state
  setAction(initialAction);
- }, [initialAction, steps]);
+ }, [initialAction, steps, actionComplete]);
 
  const isSwap =
  action.type === "steldex_swap" ||
@@ -835,12 +901,21 @@ export function TransactionActionCard({
  const [progress, setProgress] = useState<string | null>(null);
  const [stepInfo, setStepInfo] = useState<{ current: number; total: number } | null>(null);
  const [error, setError] = useState<string | null>(null);
- const [hash, setHash] = useState<string | null>(null);
+ const [hash, setHash] = useState<string | null>(initialCompleted?.hash ?? null);
  const [estimatedDest, setEstimatedDest] = useState<string | null>(
  action.estimatedDestAmount ?? null
  );
  const [quoteLoading, setQuoteLoading] = useState(false);
- const [outcomeLine, setOutcomeLine] = useState<string | null>(null);
+ const [outcomeLine, setOutcomeLine] = useState<string | null>(
+ initialCompleted?.summary ?? null
+ );
+
+ useEffect(() => {
+ if (!initialCompleted) return;
+ setActionComplete(true);
+ setHash(initialCompleted.hash);
+ setOutcomeLine(initialCompleted.summary);
+ }, [initialCompleted]);
  const [mediaBusy, setMediaBusy] = useState(false);
  const [mediaError, setMediaError] = useState<string | null>(null);
  const [packProgress, setPackProgress] = useState<string | null>(null);
@@ -883,6 +958,7 @@ export function TransactionActionCard({
  };
 
  useEffect(() => {
+ if (actionComplete || status === "success") return;
  if (estimatedDest || quoteLoading) return;
 
  const fetchSteldexQuote = async () => {
@@ -956,9 +1032,11 @@ export function TransactionActionCard({
  else if (action.type === "swap") void fetchClassicQuote();
  }, [
  action,
+ actionComplete,
  estimatedDest,
  quoteLoading,
  publicKey,
+ status,
  ]);
 
  useEffect(() => {
@@ -1020,13 +1098,12 @@ export function TransactionActionCard({
  }),
  }).catch(() => {});
  }
+      const isTerminal = !steps || stepIndex >= steps.length - 1;
       onOutcome?.({
         hash,
         summary,
-        teach:
-          !steps || stepIndex >= steps.length - 1
-            ? teachLessonForAction(action.type)
-            : null,
+        teach: isTerminal ? teachLessonForAction(action.type) : null,
+        terminal: isTerminal,
       });
 
       // Multi-action queue: advance to next step (same card) after a brief success beat
@@ -1051,6 +1128,9 @@ export function TransactionActionCard({
  } else if (steps) {
  setStepHashes((prev) => [...prev, hash]);
  setPlanComplete(true);
+ setActionComplete(true);
+ } else {
+ setActionComplete(true);
  }
  } else if (status === "error") {
  track("error", {
@@ -1078,6 +1158,7 @@ export function TransactionActionCard({
  ]);
 
  const handleExecute = async (opts?: { skipTooLateRetry?: boolean }) => {
+ if (actionComplete) return;
  if (!publicKey) return;
  if (action.type === "nft_create_collection" && !collectionSetupReady(action)) {
  setError(
@@ -1152,6 +1233,7 @@ export function TransactionActionCard({
  setOutcomeLine(null);
  } else {
  setStatus("success");
+ setActionComplete(true);
  }
  return;
  }
@@ -1658,7 +1740,7 @@ export function TransactionActionCard({
  </div>
  )}
 
- {!planComplete && (
+ {!actionComplete && (
  <div className="text-sm space-y-1.5 text-muted-foreground">
  {action.sendAmount && action.sendAsset && action.type !== "steldex_remove_liquidity" && action.type !== "steldex_stake" && action.type !== "steldex_unstake" && action.type !== "steldex_claim" && (
  <div className="flex justify-between">
@@ -1687,7 +1769,9 @@ export function TransactionActionCard({
  {action.type === "steldex_stake" && (
  <div className="flex justify-between">
  <span>Lock</span>
- <span className="font-medium text-foreground">{action.lockWeeks ?? 52} weeks</span>
+ <span className="font-medium text-foreground">
+ {action.lockWeeks != null ? `${action.lockWeeks} weeks` : "Choose weeks in chat"}
+ </span>
  </div>
  )}
  {action.type === "send" && action.destination && (
@@ -1883,6 +1967,63 @@ export function TransactionActionCard({
  }
  className="w-full rounded-xl border bg-background px-2.5 py-1.5 text-[11px] text-foreground placeholder:text-muted-foreground disabled:opacity-50"
  />
+ <div className="grid grid-cols-2 gap-1.5">
+ <label className="space-y-0.5">
+ <span className="text-[10px] text-muted-foreground">Public mint (XLM)</span>
+ <input
+ type="number"
+ min={0}
+ step={0.1}
+ placeholder="0 = free"
+ value={action.publicMintPriceXlm ?? "0"}
+ disabled={isBusy}
+ onChange={(e) =>
+ setAction((prev) => ({
+ ...prev,
+ publicMintPriceXlm: e.target.value,
+ publicMintActive: true,
+ allowlistActive: false,
+ }))
+ }
+ className="w-full rounded-xl border bg-background px-2.5 py-1.5 text-[11px] text-foreground disabled:opacity-50"
+ />
+ </label>
+ <label className="space-y-0.5">
+ <span className="text-[10px] text-muted-foreground">Allowlist mint (XLM)</span>
+ <input
+ type="number"
+ min={0}
+ step={0.1}
+ placeholder="presale price"
+ value={action.allowlistMintPriceXlm ?? ""}
+ disabled={isBusy}
+ onChange={(e) =>
+ setAction((prev) => ({
+ ...prev,
+ allowlistMintPriceXlm: e.target.value.trim() || undefined,
+ }))
+ }
+ className="w-full rounded-xl border bg-background px-2.5 py-1.5 text-[11px] text-foreground disabled:opacity-50"
+ />
+ </label>
+ </div>
+ <label className="space-y-0.5 block">
+ <span className="text-[10px] text-muted-foreground">Max mints per wallet (primary)</span>
+ <input
+ type="number"
+ min={0}
+ placeholder="0 = unlimited"
+ value={action.maxMintPerWallet ?? ""}
+ disabled={isBusy}
+ onChange={(e) =>
+ setAction((prev) => ({
+ ...prev,
+ maxMintPerWallet: Math.max(0, Math.floor(Number(e.target.value) || 0)),
+ }))
+ }
+ className="w-full rounded-xl border bg-background px-2.5 py-1.5 text-[11px] text-foreground disabled:opacity-50"
+ />
+ </label>
  {!collectionSetupReady(action) && (
  <p className="text-[11px] text-amber-700 dark:text-amber-400">
  Still need: {collectionSetupMissing(action).join(", ")}
@@ -2070,7 +2211,7 @@ export function TransactionActionCard({
  </div>
  )}
 
- {isSwap && status === "idle" && (
+ {isSwap && !actionComplete && status === "idle" && (
  <div className="flex items-center justify-between text-[11px]">
  <span className="text-muted-foreground">Slippage tolerance</span>
  <div className="flex gap-1">
@@ -2093,7 +2234,7 @@ export function TransactionActionCard({
  </div>
  )}
 
- {status !== "success" && status !== "error" && (
+ {status !== "success" && status !== "error" && !actionComplete && (
  <div className="rounded-xl bg-orbit-gradient-subtle px-3 py-2.5 text-[11px] leading-relaxed text-muted-foreground ring-1 ring-primary/10">
  <p className="mb-1.5 font-medium text-foreground">Before you sign</p>
  <p className="mb-1.5 text-foreground/80">{confidence.walletScope}</p>
@@ -2105,7 +2246,7 @@ export function TransactionActionCard({
  </div>
  )}
 
- {status === "success" ? (
+ {actionComplete || status === "success" ? (
  <div className="space-y-2 rounded-xl border border-primary/20 bg-orbit-gradient-subtle p-3">
  <div className="flex items-center gap-2 text-sm font-medium text-green-600 dark:text-green-500">
  <CheckCircle2 className="w-4 h-4 shrink-0" />
