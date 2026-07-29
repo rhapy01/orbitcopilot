@@ -152,7 +152,9 @@ impl OrbitNft {
         env.storage()
             .instance()
             .set(&DataKey::PaymentToken, &payment_token);
-        env.storage().instance().set(&DataKey::MaxSupply, &max_supply);
+        env.storage()
+            .instance()
+            .set(&DataKey::MaxSupply, &max_supply);
         env.storage().instance().set(&DataKey::OpenMint, &open_mint);
         env.storage().instance().set(&DataKey::NextId, &1u32);
         Self::store_fees(&env, &fees);
@@ -183,7 +185,9 @@ impl OrbitNft {
         if royalty_bps > MAX_ROYALTY_BPS {
             panic!("royalty too high");
         }
-        env.storage().instance().set(&DataKey::RoyaltyBps, &royalty_bps);
+        env.storage()
+            .instance()
+            .set(&DataKey::RoyaltyBps, &royalty_bps);
         env.storage()
             .instance()
             .set(&DataKey::RoyaltyReceiver, &royalty_receiver);
@@ -302,9 +306,7 @@ impl OrbitNft {
     }
 
     pub fn allowlist_entry(env: Env, wallet: Address) -> Option<AllowlistEntry> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::Allowlist(wallet))
+        env.storage().persistent().get(&DataKey::Allowlist(wallet))
     }
 
     pub fn wallet_mint_count(env: Env, wallet: Address) -> u32 {
@@ -407,13 +409,7 @@ impl OrbitNft {
         Self::transfer_internal(&env, &from, &to, token_id);
     }
 
-    pub fn transfer_from(
-        env: Env,
-        spender: Address,
-        from: Address,
-        to: Address,
-        token_id: u32,
-    ) {
+    pub fn transfer_from(env: Env, spender: Address, from: Address, to: Address, token_id: u32) {
         spender.require_auth();
         Self::require_approved_or_operator(&env, &spender, &from, token_id);
         Self::transfer_internal(&env, &from, &to, token_id);
@@ -446,12 +442,7 @@ impl OrbitNft {
         );
     }
 
-    pub fn approve_for_all(
-        env: Env,
-        owner: Address,
-        operator: Address,
-        live_until_ledger: u32,
-    ) {
+    pub fn approve_for_all(env: Env, owner: Address, operator: Address, live_until_ledger: u32) {
         owner.require_auth();
         if live_until_ledger != 0 && live_until_ledger < env.ledger().sequence() {
             panic!("expired ledger");
@@ -658,9 +649,10 @@ impl OrbitNft {
         env.storage()
             .instance()
             .set(&DataKey::PublicMintPrice, &mint_config.public_mint_price);
-        env.storage()
-            .instance()
-            .set(&DataKey::AllowlistMintPrice, &mint_config.allowlist_mint_price);
+        env.storage().instance().set(
+            &DataKey::AllowlistMintPrice,
+            &mint_config.allowlist_mint_price,
+        );
         env.storage()
             .instance()
             .set(&DataKey::MaxMintPerWallet, &mint_config.max_mint_per_wallet);
@@ -808,9 +800,7 @@ impl OrbitNft {
 
         env.storage().persistent().set(&DataKey::Owner(id), to);
         if uri.len() > 0 {
-            env.storage()
-                .persistent()
-                .set(&DataKey::TokenUri(id), &uri);
+            env.storage().persistent().set(&DataKey::TokenUri(id), &uri);
         }
         Self::inc_balance(env, to, 1);
         Self::push_owner_token(env, to, id);
@@ -871,12 +861,7 @@ impl OrbitNft {
             .expect("token missing")
     }
 
-    fn require_approved_or_operator(
-        env: &Env,
-        spender: &Address,
-        from: &Address,
-        token_id: u32,
-    ) {
+    fn require_approved_or_operator(env: &Env, spender: &Address, from: &Address, token_id: u32) {
         if spender == from {
             return;
         }
