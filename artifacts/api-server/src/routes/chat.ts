@@ -15,6 +15,7 @@ import {
  listChatMessages,
  listPriorChatTurns,
  listRecentSessions,
+ patchChatMessageMetadata,
 } from "../lib/chat-store";
 import {
  STELDEX_FULL_RANGE,
@@ -318,10 +319,10 @@ const MERIDIAN_WITHDRAW_RE =
 
 // Circle CCTP: "bridge 1 USDC to base sepolia 0x…" / "cctp 2 usdc to ethereum 0x…"
 const CCTP_BRIDGE_RE =
-  /\b(?:bridge|cctp)\s+([\d.]+)\s*usdc\b(?:.*?\b(?:to|onto|on)\b\s*)?(?:(base|ethereum|eth|arbitrum|arb|optimism|op)(?:\s+sepolia)?)?\s*(0x[a-fA-F0-9]{40})\b/i;
+  /\b(?:bridge|cctp)\s+([\d.]+)\s*usdc\b(?:.*?\b(?:to|onto|on)\b\s*)?(?:(base|ethereum|eth|arbitrum|arb|optimism|op|arc)(?:\s+(?:sepolia|testnet))?)?\s*(0x[a-fA-F0-9]{40})\b/i;
 /** Amount + USDC + optional chain, but missing 0x destination. */
 const CCTP_INCOMPLETE_RE =
-  /\b(?:bridge|cctp)\s+([\d.]+)\s*usdc\b(?:.*?\b(?:to|onto|on)\b\s*(base|ethereum|eth|arbitrum|arb|optimism|op)(?:\s+sepolia)?)?/i;
+  /\b(?:bridge|cctp)\s+([\d.]+)\s*usdc\b(?:.*?\b(?:to|onto|on)\b\s*(base|ethereum|eth|arbitrum|arb|optimism|op|arc)(?:\s+(?:sepolia|testnet))?)?/i;
 const CCTP_ATTEST_RE =
   /\b(?:cctp\s+)?attest(?:ation)?\b.*?\b([a-f0-9]{64})\b/i;
 const EVM_ADDRESS_RE = /\b(0x[a-fA-F0-9]{40})\b/;
@@ -452,7 +453,6 @@ interface ChatAction {
     | "defindex_withdraw"
     | "meridian_deposit"
     | "meridian_withdraw"
-    | "cctp_approve"
     | "cctp_bridge"
     | "aquarius_swap"
  | "connect_wallet"
@@ -491,6 +491,8 @@ interface ChatAction {
  xdr?: string;
  networkPassphrase?: string;
  pendingAction?: ChatAction;
+ /** CCTP: approve USDC first, then burn (single-op each). */
+ cctpStep?: "approve" | "burn";
  sendAmount?: string;
  sendAsset?: string;
  destination?: string;
@@ -2819,7 +2821,7 @@ async function getDeterministicResponse(
       return {
         text: prepared.message,
         action: {
-          type: prepared.type,
+          type: "cctp_bridge",
           sendAmount: prepared.sendAmount,
           sendAsset: prepared.sendAsset,
           destAsset: prepared.destAsset,
@@ -2828,7 +2830,8 @@ async function getDeterministicResponse(
           poolContract: prepared.poolContract,
           xdr: prepared.xdr,
           networkPassphrase: prepared.networkPassphrase,
-          ...(prepared.type === "cctp_approve" && prepared.pendingAction
+          cctpStep: prepared.cctpStep,
+          ...(prepared.cctpStep === "approve" && prepared.pendingAction
             ? { pendingAction: prepared.pendingAction as ChatAction }
             : {}),
         } as ChatAction,
@@ -3609,6 +3612,55 @@ router.delete("/chat/messages/:id", async (req, res): Promise<void> => {
  ? err.message
  : "Delete failed (Postgres)",
  });
+ }
+});
+
+/** Persist completed tx receipt onto the assistant message so refresh stays Done. */
+router.patch("/chat/messages/:id", async (req, res): Promise<void> => {
+ try {
+  const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const id = parseInt(String(raw), 10);
+  if (!Number.isFinite(id) || id <= 0) {
+   res.status(400).json({ error: "Invalid message id" });
+   return;
+  }
+  const completed = req.body?.completed;
+  if (
+   !completed ||
+   typeof completed !== "object" ||
+   typeof (completed as { summary?: unknown }).summary !== "string"
+  ) {
+   res.status(400).json({ error: "completed: { hash, summary } required" });
+   return;
+  }
+  const hashRaw = (completed as { hash?: unknown }).hash;
+  const hash =
+   typeof hashRaw === "string" && hashRaw.trim()
+    ? hashRaw.trim()
+    : hashRaw === null
+      ? null
+      : null;
+  const summary = String((completed as { summary: string }).summary).trim();
+  if (!summary) {
+   res.status(400).json({ error: "completed.summary required" });
+   return;
+  }
+  const updated = await patchChatMessageMetadata(id, {
+   completed: { hash, summary },
+  });
+  if (!updated) {
+   res.status(404).json({ error: "Message not found" });
+   return;
+  }
+  res.json({
+   id: updated.id,
+   metadata: updated.metadata,
+  });
+ } catch (err) {
+  console.error("[chat] PATCH /messages failed:", err);
+  res.status(503).json({
+   error: err instanceof Error ? err.message : "Patch failed (Postgres)",
+  });
  }
 });
 

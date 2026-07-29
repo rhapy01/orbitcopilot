@@ -27,39 +27,65 @@ export const CCTP_STELLAR = {
 /** Iris attestation API (sandbox for testnet). */
 const IRIS_BASE = "https://iris-api-sandbox.circle.com";
 
-export type CctpDestChain = "base" | "ethereum" | "arbitrum" | "optimism";
+export type CctpDestChain = "base" | "ethereum" | "arbitrum" | "optimism" | "arc";
 
 export const CCTP_DEST_DOMAINS: Record<
   CctpDestChain,
-  { domain: number; label: string; explorerTx: (hash: string) => string }
+  {
+    domain: number;
+    label: string;
+    explorerTx: (hash: string) => string;
+    explorerAddress: (addr: string) => string;
+  }
 > = {
   ethereum: {
     domain: 0,
     label: "Ethereum Sepolia",
     explorerTx: (h) => `https://sepolia.etherscan.io/tx/${h}`,
+    explorerAddress: (a) => `https://sepolia.etherscan.io/address/${a}`,
   },
   base: {
     domain: 6,
     label: "Base Sepolia",
     explorerTx: (h) => `https://sepolia.basescan.org/tx/${h}`,
+    explorerAddress: (a) => `https://sepolia.basescan.org/address/${a}`,
   },
   arbitrum: {
     domain: 3,
     label: "Arbitrum Sepolia",
     explorerTx: (h) => `https://sepolia.arbiscan.io/tx/${h}`,
+    explorerAddress: (a) => `https://sepolia.arbiscan.io/address/${a}`,
   },
   optimism: {
     domain: 2,
     label: "OP Sepolia",
     explorerTx: (h) => `https://sepolia-optimism.etherscan.io/tx/${h}`,
+    explorerAddress: (a) => `https://sepolia-optimism.etherscan.io/address/${a}`,
+  },
+  /** Circle Arc Testnet — CCTP domain 26; gas is native USDC. */
+  arc: {
+    domain: 26,
+    label: "Arc Testnet",
+    explorerTx: (h) => `https://testnet.arcscan.app/tx/${h}`,
+    explorerAddress: (a) => `https://testnet.arcscan.app/address/${a}`,
   },
 };
 
 export function resolveCctpDest(raw?: string | null): CctpDestChain {
   const t = (raw ?? "base").trim().toLowerCase();
-  if (/^(eth|ethereum|sepolia)$/.test(t) || t.includes("ethereum")) return "ethereum";
-  if (/^(arb|arbitrum)/.test(t)) return "arbitrum";
-  if (/^(op|optimism|optimistic)/.test(t)) return "optimism";
+  // Arc before loose substring checks — "Arc Testnet" must never become Base/OP.
+  if (/\barc\b/.test(t)) return "arc";
+  if (/\barbitrum\b/.test(t) || /^(arb)\b/.test(t)) return "arbitrum";
+  if (/\boptimism\b/.test(t) || /^(op)\b/.test(t) || /\boptimistic\b/.test(t)) {
+    return "optimism";
+  }
+  if (/\bethereum\b/.test(t) || /^(eth)\b/.test(t)) return "ethereum";
+  if (/\bbase\b/.test(t)) return "base";
+  // Exact keys from destAsset field
+  if (t === "arc") return "arc";
+  if (t === "arbitrum" || t === "arb") return "arbitrum";
+  if (t === "optimism" || t === "op") return "optimism";
+  if (t === "ethereum" || t === "eth" || t === "sepolia") return "ethereum";
   return "base";
 }
 
@@ -189,10 +215,13 @@ export type CctpBridgePending = {
   poolContract: string;
   destinationDomain: number;
   sourceDomain: number;
+  cctpStep: "burn";
 };
 
 export type CctpApproveAction = {
-  type: "cctp_approve";
+  type: "cctp_bridge";
+  /** Step 1: USDC approve for TokenMessenger (single-op). */
+  cctpStep: "approve";
   sendAmount: string;
   sendAsset: "USDC";
   destAsset: string;
@@ -207,6 +236,7 @@ export type CctpApproveAction = {
 
 export type CctpBridgeAction = {
   type: "cctp_bridge";
+  cctpStep: "burn";
   sendAmount: string;
   sendAsset: "USDC";
   destAsset: string;
@@ -264,7 +294,8 @@ export async function prepareCctpApprove(input: {
   }
 
   return {
-    type: "cctp_approve",
+    type: "cctp_bridge",
+    cctpStep: "approve",
     sendAmount: human,
     sendAsset: "USDC",
     destAsset: destChain,
@@ -273,12 +304,10 @@ export async function prepareCctpApprove(input: {
     poolContract: CCTP_STELLAR.usdc,
     xdr: built.xdr,
     networkPassphrase: built.networkPassphrase || NETWORK_PASSPHRASE,
-    message: [
-      `CCTP step 1/2: approve Circle’s TokenMessenger to spend **${human} USDC**.`,
-      `After this, sign the burn to bridge → **${destMeta.label}** (\`${destination}\`).`,
-    ].join(" "),
+    message: `Bridge **${human} USDC** to **${destMeta.label}** (${truncateEvmAddress(destination)}). Confirm twice in your wallet.`,
     pendingAction: {
       type: "cctp_bridge",
+      cctpStep: "burn",
       sendAmount: human,
       sendAsset: "USDC",
       destAsset: destChain,
@@ -389,6 +418,7 @@ export async function prepareCctpBridge(input: {
   const human = stroopsToHuman(amount);
   return {
     type: "cctp_bridge",
+    cctpStep: "burn",
     sendAmount: human,
     sendAsset: "USDC",
     destAsset: destChain,
@@ -399,13 +429,7 @@ export async function prepareCctpBridge(input: {
     networkPassphrase: built.networkPassphrase || NETWORK_PASSPHRASE,
     destinationDomain: destMeta.domain,
     sourceDomain: CCTP_STELLAR.domain,
-    message: [
-      `Circle CCTP: bridge **${human} USDC** from Stellar Testnet → **${destMeta.label}**.`,
-      `Recipient: \`${destination}\`.`,
-      "Sign to burn on Stellar. After confirmation Orbit polls Circle Iris for the attestation so USDC can be minted on " +
-        destMeta.label +
-        ".",
-    ].join(" "),
+    message: `Confirm again to finish bridging **${human} USDC** to **${destMeta.label}**.`,
   };
 }
 
@@ -415,8 +439,57 @@ export type CctpAttestationStatus = {
   attestation?: string;
   eventNonce?: string;
   decoded?: unknown;
+  /** Destination-chain mint/forward tx when Circle has relayed it. */
+  forwardTxHash?: string;
+  forwardState?: string;
   text: string;
 };
+
+const EVM_CCTP: Record<
+  CctpDestChain,
+  { rpc: string; messageTransmitter: string; label: string }
+> = {
+  ethereum: {
+    rpc: process.env.ETHEREUM_SEPOLIA_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com",
+    messageTransmitter: "0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275",
+    label: "Ethereum Sepolia",
+  },
+  base: {
+    rpc: process.env.BASE_SEPOLIA_RPC_URL || "https://sepolia.base.org",
+    messageTransmitter: "0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275",
+    label: "Base Sepolia",
+  },
+  arbitrum: {
+    rpc: process.env.ARBITRUM_SEPOLIA_RPC_URL || "https://sepolia-rollup.arbitrum.io/rpc",
+    messageTransmitter: "0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275",
+    label: "Arbitrum Sepolia",
+  },
+  optimism: {
+    rpc: process.env.OPTIMISM_SEPOLIA_RPC_URL || "https://sepolia.optimism.io",
+    messageTransmitter: "0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275",
+    label: "OP Sepolia",
+  },
+  arc: {
+    // Arc uses native USDC for gas — fund the same EVM_PRIVATE_KEY wallet with Arc USDC.
+    rpc: process.env.ARC_TESTNET_RPC_URL || "https://rpc.testnet.arc.io",
+    messageTransmitter: "0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275",
+    label: "Arc Testnet",
+  },
+};
+
+const MESSAGE_TRANSMITTER_ABI = [
+  "function receiveMessage(bytes message, bytes attestation) returns (bool)",
+] as const;
+
+function cctpRelayerKey(): string | null {
+  const raw =
+    process.env.CCTP_EVM_RELAYER_KEY?.trim() ||
+    process.env.EVM_PRIVATE_KEY?.trim() ||
+    "";
+  if (!raw) return null;
+  // Accept hex with or without 0x (common when pasted into .env)
+  return raw.startsWith("0x") ? raw : `0x${raw}`;
+}
 
 /** Poll Circle Iris for a CCTP message after the Stellar burn tx. */
 export async function fetchCctpAttestation(input: {
@@ -426,7 +499,7 @@ export async function fetchCctpAttestation(input: {
   const domain = input.sourceDomain ?? CCTP_STELLAR.domain;
   const hash = input.stellarTxHash.trim();
   if (!hash) {
-    return { status: "failed", text: "Missing Stellar transaction hash for attestation." };
+    return { status: "failed", text: "Missing Stellar transaction hash." };
   }
 
   const url = `${IRIS_BASE}/v2/messages/${domain}?transactionHash=${encodeURIComponent(hash)}`;
@@ -436,20 +509,14 @@ export async function fetchCctpAttestation(input: {
     if (!res.ok) {
       const errMsg = typeof data?.error === "string" ? data.error : `Iris HTTP ${res.status}`;
       if (/not found/i.test(errMsg) || res.status === 404) {
-        return {
-          status: "pending",
-          text: "Attestation not ready yet — Circle Iris usually needs 30–90s after the burn. Ask again with the tx hash shortly.",
-        };
+        return { status: "pending", text: "Still confirming…" };
       }
-      return { status: "failed", text: `Attestation lookup failed: ${errMsg}` };
+      return { status: "failed", text: errMsg };
     }
 
     const msg = Array.isArray(data?.messages) ? data.messages[0] : data?.message ?? data;
     if (!msg) {
-      return {
-        status: "pending",
-        text: "No CCTP message yet for that tx. Wait a bit and retry attestation.",
-      };
+      return { status: "pending", text: "Still confirming…" };
     }
 
     const statusRaw = String(msg.status ?? msg.messageStatus ?? "").toLowerCase();
@@ -457,6 +524,16 @@ export async function fetchCctpAttestation(input: {
       typeof msg.attestation === "string" && msg.attestation !== "PENDING"
         ? msg.attestation
         : undefined;
+    const messageBytes =
+      typeof msg.message === "string" && msg.message.startsWith("0x") && msg.message.length > 4
+        ? msg.message
+        : undefined;
+    const forwardTxHash =
+      typeof msg.forwardTxHash === "string" && /^0x[a-fA-F0-9]{64}$/i.test(msg.forwardTxHash)
+        ? msg.forwardTxHash
+        : undefined;
+    const forwardState =
+      typeof msg.forwardState === "string" ? msg.forwardState : undefined;
     const complete =
       Boolean(attestation) ||
       statusRaw === "complete" ||
@@ -466,41 +543,146 @@ export async function fetchCctpAttestation(input: {
     if (!complete) {
       return {
         status: "pending",
-        message: typeof msg.message === "string" ? msg.message : undefined,
+        message: messageBytes,
         eventNonce: msg.eventNonce != null ? String(msg.eventNonce) : undefined,
         decoded: msg.decodedMessage ?? msg.decodedMessageBody,
-        text: "Circle is still attesting your burn. Try again in ~30s.",
+        forwardTxHash,
+        forwardState,
+        text: "Still confirming…",
       };
     }
 
     return {
       status: "complete",
-      message: typeof msg.message === "string" ? msg.message : undefined,
+      message: messageBytes,
       attestation,
       eventNonce: msg.eventNonce != null ? String(msg.eventNonce) : undefined,
       decoded: msg.decodedMessage ?? msg.decodedMessageBody,
-      text: [
-        "CCTP attestation ready.",
-        attestation ? `Attestation: \`${attestation.slice(0, 18)}…\`` : "",
-        "Anyone can call receiveMessage on the destination TokenMessenger to mint USDC to your 0x address (destination_caller was open).",
-      ]
-        .filter(Boolean)
-        .join(" "),
+      forwardTxHash,
+      forwardState,
+      text: forwardTxHash ? "Bridge complete." : "Bridge sent — destination confirming…",
     };
   } catch (err: any) {
     logger.warn({ err }, "CCTP Iris fetch failed");
     return {
       status: "failed",
-      text: err?.message ?? "Could not reach Circle Iris attestation API",
+      text: err?.message ?? "Could not reach Circle Iris",
+    };
+  }
+}
+
+/**
+ * Resolve destination mint tx: Iris forwardTxHash, or Orbit relayer receiveMessage.
+ * Never returns a wallet-address URL — only a real destination tx when available.
+ */
+export async function completeCctpDestination(input: {
+  stellarTxHash: string;
+  destChain?: string;
+}): Promise<{
+  status: "pending" | "complete" | "failed";
+  stellarTxHash: string;
+  destinationTxHash?: string;
+  destinationExplorerUrl?: string;
+  destLabel: string;
+  text: string;
+}> {
+  const destChain = resolveCctpDest(input.destChain);
+  const destMeta = CCTP_DEST_DOMAINS[destChain];
+  const stellarTxHash = input.stellarTxHash.trim();
+  const attest = await fetchCctpAttestation({ stellarTxHash });
+
+  if (attest.forwardTxHash) {
+    return {
+      status: "complete",
+      stellarTxHash,
+      destinationTxHash: attest.forwardTxHash,
+      destinationExplorerUrl: destMeta.explorerTx(attest.forwardTxHash),
+      destLabel: destMeta.label,
+      text: "Bridge complete.",
+    };
+  }
+
+  if (attest.status === "failed") {
+    return {
+      status: "failed",
+      stellarTxHash,
+      destLabel: destMeta.label,
+      text: attest.text,
+    };
+  }
+
+  if (attest.status !== "complete" || !attest.message || !attest.attestation) {
+    return {
+      status: "pending",
+      stellarTxHash,
+      destLabel: destMeta.label,
+      text: "Waiting for confirmation…",
+    };
+  }
+
+  const key = cctpRelayerKey();
+  if (!key) {
+    return {
+      status: "pending",
+      stellarTxHash,
+      destLabel: destMeta.label,
+      text: "Waiting for destination confirmation…",
+    };
+  }
+
+  try {
+    const { ethers } = await import("ethers");
+    const chain = EVM_CCTP[destChain];
+    const provider = new ethers.JsonRpcProvider(chain.rpc);
+    const wallet = new ethers.Wallet(key, provider);
+    const transmitter = new ethers.Contract(
+      chain.messageTransmitter,
+      MESSAGE_TRANSMITTER_ABI,
+      wallet
+    );
+    const tx = await transmitter.receiveMessage(attest.message, attest.attestation);
+    const receipt = await tx.wait();
+    const destinationTxHash = String(receipt?.hash ?? tx.hash);
+    return {
+      status: "complete",
+      stellarTxHash,
+      destinationTxHash,
+      destinationExplorerUrl: destMeta.explorerTx(destinationTxHash),
+      destLabel: destMeta.label,
+      text: "Bridge complete.",
+    };
+  } catch (err: any) {
+    const msg = String(err?.message ?? err ?? "");
+    // Already minted / nonce used — treat as success if we can find forwardTxHash on retry
+    if (/already|nonce|used|InvalidMessage/i.test(msg)) {
+      const again = await fetchCctpAttestation({ stellarTxHash });
+      if (again.forwardTxHash) {
+        return {
+          status: "complete",
+          stellarTxHash,
+          destinationTxHash: again.forwardTxHash,
+          destinationExplorerUrl: destMeta.explorerTx(again.forwardTxHash),
+          destLabel: destMeta.label,
+          text: "Bridge complete.",
+        };
+      }
+    }
+    logger.warn({ err }, "CCTP EVM receiveMessage failed");
+    return {
+      status: "pending",
+      stellarTxHash,
+      destLabel: destMeta.label,
+      text: "Destination still confirming…",
     };
   }
 }
 
 export function formatCctpHelp(): string {
-  return [
-    "**Circle CCTP** (testnet): bridge native USDC Stellar → EVM testnets.",
-    "Try: `bridge 1 USDC to base sepolia 0xYourAddress`",
-    "Also: ethereum / arbitrum / optimism sepolia.",
-    "Flow: sign burn on Stellar → wait for Iris attestation → mint on destination.",
-  ].join("\n");
+  return "Try: `bridge 1 USDC to base 0xYourAddress` or `bridge 1 USDC to arc 0xYourAddress` (also eth / arb / op)";
+}
+
+export function truncateEvmAddress(addr: string): string {
+  const a = addr.trim();
+  if (a.length < 12) return a;
+  return `${a.slice(0, 6)}…${a.slice(-4)}`;
 }

@@ -297,6 +297,31 @@ export async function deleteChatMessage(id: number): Promise<void> {
  await db.delete(chatMessagesTable).where(eq(chatMessagesTable.id, id));
 }
 
+/** Merge fields into an existing message's JSON metadata (e.g. completed tx receipt). */
+export async function patchChatMessageMetadata(
+ id: number,
+ patch: Record<string, unknown>
+): Promise<StoredChatMessage | null> {
+ await ensureChatSchema();
+ const [existing] = await db
+  .select()
+  .from(chatMessagesTable)
+  .where(eq(chatMessagesTable.id, id))
+  .limit(1);
+ if (!existing) return null;
+ const prev =
+  existing.metadata && typeof existing.metadata === "object" && !Array.isArray(existing.metadata)
+   ? (existing.metadata as Record<string, unknown>)
+   : {};
+ const metadata = { ...prev, ...patch };
+ const [row] = await db
+  .update(chatMessagesTable)
+  .set({ metadata: metadata as never })
+  .where(eq(chatMessagesTable.id, id))
+  .returning();
+ return row ? toStored(row) : null;
+}
+
 /** @deprecated Prefer createChatSession - starts a fresh thread without deleting history. */
 export async function clearChatMessages(
  wallet: string | null

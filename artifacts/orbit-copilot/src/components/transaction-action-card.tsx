@@ -108,7 +108,6 @@ export interface ChatAction {
     | "defindex_withdraw"
     | "meridian_deposit"
     | "meridian_withdraw"
-    | "cctp_approve"
     | "cctp_bridge"
     | "aquarius_swap"
  | "connect_wallet"
@@ -174,8 +173,10 @@ export interface ChatAction {
  markPriceStale?: boolean;
  xdr?: string;
  networkPassphrase?: string;
- /** For add_trustline: the swap action to auto-execute after trustline is added */
+ /** For add_trustline / CCTP approve: next action after this step */
  pendingAction?: ChatAction;
+ /** CCTP: approve then burn (single-op each) */
+ cctpStep?: "approve" | "burn";
 }
 
 const MEDIA_MAX_BYTES = 8 * 1024 * 1024;
@@ -501,25 +502,16 @@ case "meridian_withdraw":
   endpoint = "/api/meridian/withdraw";
   body = { ...body, amount: action.sendAmount, shares: action.sendAmount };
   break;
-case "cctp_approve":
-  endpoint = "/api/cctp/approve";
-  body = {
-    ...body,
-    amount: action.sendAmount,
-    destination: action.destination,
-    destAsset: action.destAsset,
-    marketHint: action.marketHint,
-  };
-  break;
 case "cctp_bridge":
-  endpoint = "/api/cctp/bridge";
+  endpoint =
+    action.cctpStep === "approve" ? "/api/cctp/approve" : "/api/cctp/bridge";
   body = {
     ...body,
     amount: action.sendAmount,
     destination: action.destination,
-    destAsset: action.destAsset,
+    destAsset: resolveCctpDestClient(action.destAsset, action.marketHint),
     marketHint: action.marketHint,
-    burnOnly: true,
+    ...(action.cctpStep !== "approve" ? { burnOnly: true } : {}),
   };
   break;
  case "blend_usdc_swap":
@@ -577,6 +569,13 @@ case "cctp_bridge":
  metadataUri:
  typeof data.metadataUri === "string" ? data.metadataUri : undefined,
  imageUrl: typeof data.imageUrl === "string" ? data.imageUrl : undefined,
+ destAsset: typeof data.destAsset === "string" ? data.destAsset : undefined,
+ destination: typeof data.destination === "string" ? data.destination : undefined,
+ marketHint: typeof data.marketHint === "string" ? data.marketHint : undefined,
+ pendingAction:
+ data.pendingAction && typeof data.pendingAction === "object"
+ ? (data.pendingAction as ChatAction)
+ : undefined,
  };
 }
 
@@ -643,12 +642,86 @@ function isOrbitNativeAction(type: ChatAction["type"]) {
     type === "defindex_withdraw" ||
     type === "meridian_deposit" ||
     type === "meridian_withdraw" ||
-    type === "cctp_approve" ||
     type === "cctp_bridge" ||
     type === "blend_claim" ||
  type === "blend_usdc_swap" ||
  type === "aquarius_swap"
  );
+}
+
+/** Resolve CCTP dest from destAsset and/or marketHint (e.g. "Arc Testnet · 0x…"). */
+function resolveCctpDestClient(destAsset?: string, marketHint?: string): string {
+  const raw = `${destAsset ?? ""} ${marketHint ?? ""}`.trim().toLowerCase();
+  if (/\barc\b/.test(raw)) return "arc";
+  if (/\barbitrum\b/.test(raw) || /(^|\s)arb(\s|$)/.test(raw)) return "arbitrum";
+  if (/\boptimism\b/.test(raw) || /(^|\s)op(\s|$)/.test(raw)) return "optimism";
+  if (/\bethereum\b/.test(raw) || /(^|\s)eth(\s|$)/.test(raw)) return "ethereum";
+  if (/\bbase\b/.test(raw)) return "base";
+  const d = (destAsset ?? "").trim().toLowerCase();
+  if (d === "arc" || d === "arbitrum" || d === "optimism" || d === "ethereum" || d === "base") {
+    return d;
+  }
+  return "base";
+}
+
+function cctpDestLabel(destAsset?: string, marketHint?: string): string {
+  switch (resolveCctpDestClient(destAsset, marketHint)) {
+    case "ethereum":
+      return "Ethereum Sepolia";
+    case "arbitrum":
+      return "Arbitrum Sepolia";
+    case "optimism":
+      return "OP Sepolia";
+    case "arc":
+      return "Arc Testnet";
+    default:
+      return "Base Sepolia";
+  }
+}
+
+function cctpDestShortLabel(destAsset?: string, marketHint?: string): string {
+  switch (resolveCctpDestClient(destAsset, marketHint)) {
+    case "ethereum":
+      return "Ethereum";
+    case "arbitrum":
+      return "Arbitrum";
+    case "optimism":
+      return "Optimism";
+    case "arc":
+      return "Arc";
+    default:
+      return "Base";
+  }
+}
+
+/** Destination explorer — only for a real mint/forward tx hash. */
+function cctpDestTxExplorerUrl(
+  destAsset: string | undefined,
+  destTxHash: string,
+  marketHint?: string
+): string {
+  switch (resolveCctpDestClient(destAsset, marketHint)) {
+    case "ethereum":
+      return `https://sepolia.etherscan.io/tx/${destTxHash}`;
+    case "arbitrum":
+      return `https://sepolia.arbiscan.io/tx/${destTxHash}`;
+    case "optimism":
+      return `https://sepolia-optimism.etherscan.io/tx/${destTxHash}`;
+    case "arc":
+      return `https://testnet.arcscan.app/tx/${destTxHash}`;
+    default:
+      return `https://sepolia.basescan.org/tx/${destTxHash}`;
+  }
+}
+
+function truncateAddr(addr: string): string {
+ const a = addr.trim();
+ if (a.length < 12) return a;
+ return `${a.slice(0, 6)}…${a.slice(-4)}`;
+}
+
+function isCctpBridgeAction(action: ChatAction): boolean {
+ return action.type === "cctp_bridge" || action.cctpStep != null;
 }
 
 function actionTitle(action: ChatAction): string {
@@ -725,10 +798,12 @@ function actionTitle(action: ChatAction): string {
       return "Meridian Deposit";
     case "meridian_withdraw":
       return "Meridian Withdraw";
-    case "cctp_approve":
-      return "Approve USDC for CCTP";
     case "cctp_bridge":
-      return "CCTP Bridge (USDC)";
+      return action.cctpStep === "approve"
+        ? "Bridge USDC · 1 of 2"
+        : action.cctpStep === "burn"
+          ? "Bridge USDC · 2 of 2"
+          : "Bridge USDC";
     case "steldex_swap":
  return "StelDex Swap";
  case "steldex_add_liquidity":
@@ -972,6 +1047,10 @@ export function TransactionActionCard({
  const [outcomeLine, setOutcomeLine] = useState<string | null>(
  initialCompleted?.summary ?? null
  );
+ /** CCTP approve tx hash — kept while waiting for the second confirm. */
+ const [cctpApproveHash, setCctpApproveHash] = useState<string | null>(null);
+ /** Destination mint/forward tx from Circle Iris when available. */
+ const [cctpDestTxHash, setCctpDestTxHash] = useState<string | null>(null);
 
  useEffect(() => {
  if (!initialCompleted) return;
@@ -979,6 +1058,46 @@ export function TransactionActionCard({
  setHash(initialCompleted.hash);
  setOutcomeLine(initialCompleted.summary);
  }, [initialCompleted]);
+
+ // Keep resolving destination mint tx after Stellar success (swap-like card stays up).
+ useEffect(() => {
+  if (!isCctpBridgeAction(action)) return;
+  if (!(status === "success" || actionComplete)) return;
+  if (!hash || cctpDestTxHash) return;
+  let cancelled = false;
+  (async () => {
+   for (let i = 0; i < 24; i++) {
+    if (cancelled) return;
+    if (i > 0) await new Promise((r) => setTimeout(r, 5000));
+    try {
+     const ar = await fetch("/api/cctp/complete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+       txHash: hash,
+       destAsset: resolveCctpDestClient(action.destAsset, action.marketHint),
+       marketHint: action.marketHint,
+      }),
+     });
+     const ad = await ar.json().catch(() => ({}));
+     if (
+      !cancelled &&
+      typeof ad?.destinationTxHash === "string" &&
+      /^0x[a-fA-F0-9]{64}$/i.test(ad.destinationTxHash)
+     ) {
+      setCctpDestTxHash(ad.destinationTxHash);
+      return;
+     }
+     if (ad?.status === "failed") return;
+    } catch {
+     /* retry */
+    }
+   }
+  })();
+  return () => {
+   cancelled = true;
+  };
+ }, [action, actionComplete, cctpDestTxHash, hash, status]);
  const [mediaBusy, setMediaBusy] = useState(false);
  const [mediaError, setMediaError] = useState<string | null>(null);
  const [packProgress, setPackProgress] = useState<string | null>(null);
@@ -1146,8 +1265,11 @@ export function TransactionActionCard({
  walletPublicKey: publicKey,
  metadata: { actionType: action.type, txHash: hash },
  });
- const summary = outcomeSummary(action);
- setOutcomeLine(summary);
+ const summary =
+  action.type === "cctp_bridge"
+   ? `Bridged ${action.sendAmount ?? ""} USDC → ${cctpDestLabel(action.destAsset, action.marketHint)}`
+   : outcomeSummary(action);
+ setOutcomeLine(action.type === "cctp_bridge" ? null : summary);
  if (publicKey) {
  void fetch("/api/portfolio/outcome", {
  method: "POST",
@@ -1302,16 +1424,25 @@ export function TransactionActionCard({
  }
 
  // CCTP step 1/2: approve USDC spend, then continue to burn card
- if (action.type === "cctp_approve") {
+ if (action.type === "cctp_bridge" && action.cctpStep === "approve") {
   setProgress("Refreshing USDC approve…");
   const rebuilt = await rebuildOrbitNativeXdr(action, publicKey, slippageBps);
   setAction((prev) => ({
-   ...prev,
-   xdr: rebuilt.xdr,
-   networkPassphrase: rebuilt.networkPassphrase ?? prev.networkPassphrase,
-  }));
-  setStatus("signing");
-  setProgress("Sign to approve CCTP…");
+ ...prev,
+ xdr: rebuilt.xdr,
+ networkPassphrase: rebuilt.networkPassphrase ?? prev.networkPassphrase,
+ ...(rebuilt.metadataUri ? { metadataUri: rebuilt.metadataUri } : {}),
+ ...(rebuilt.imageUrl ? { imageUrl: rebuilt.imageUrl, imageDataUrl: undefined } : {}),
+ ...(rebuilt.destAsset ? { destAsset: rebuilt.destAsset } : {}),
+ ...(rebuilt.destination ? { destination: rebuilt.destination } : {}),
+ ...(rebuilt.marketHint ? { marketHint: rebuilt.marketHint } : {}),
+ ...(rebuilt.pendingAction ? { pendingAction: rebuilt.pendingAction } : {}),
+ }));
+ if (rebuilt.estimatedDestAmount) {
+ setEstimatedDest(rebuilt.estimatedDestAmount);
+ }
+ setStatus("signing");
+ setProgress("Sign to approve CCTP…");
   const signedXdr = await signTransaction(
    rebuilt.xdr,
    rebuilt.networkPassphrase ||
@@ -1340,13 +1471,18 @@ export function TransactionActionCard({
      /* keep polling */
     }
    }
+   setCctpApproveHash(txHash);
    setAction({
     ...next,
     type: "cctp_bridge",
+    cctpStep: "burn",
     sendAmount: next.sendAmount ?? action.sendAmount,
     sendAsset: "USDC",
     destination: next.destination ?? action.destination,
-    destAsset: next.destAsset ?? action.destAsset,
+    destAsset: resolveCctpDestClient(
+     next.destAsset ?? action.destAsset,
+     next.marketHint ?? action.marketHint
+    ),
     marketHint: next.marketHint ?? action.marketHint,
    });
    setStatus("idle");
@@ -1372,6 +1508,10 @@ export function TransactionActionCard({
  networkPassphrase: rebuilt.networkPassphrase ?? prev.networkPassphrase,
  ...(rebuilt.metadataUri ? { metadataUri: rebuilt.metadataUri } : {}),
  ...(rebuilt.imageUrl ? { imageUrl: rebuilt.imageUrl, imageDataUrl: undefined } : {}),
+ ...(rebuilt.destAsset ? { destAsset: rebuilt.destAsset } : {}),
+ ...(rebuilt.destination ? { destination: rebuilt.destination } : {}),
+ ...(rebuilt.marketHint ? { marketHint: rebuilt.marketHint } : {}),
+ ...(rebuilt.pendingAction ? { pendingAction: rebuilt.pendingAction } : {}),
  }));
  if (rebuilt.estimatedDestAmount) {
  setEstimatedDest(rebuilt.estimatedDestAmount);
@@ -1391,31 +1531,10 @@ export function TransactionActionCard({
  const txHash = await submitSignedToSoroban(signedXdr);
  await recordBetaClaimIfNeeded(txHash);
  setHash(txHash);
- if (action.type === "cctp_bridge" && txHash) {
-  setProgress("Polling Circle Iris attestation…");
-  let attestText = "";
-  for (let i = 0; i < 8; i++) {
-   await new Promise((r) => setTimeout(r, i === 0 ? 4000 : 5000));
-   try {
-    const ar = await fetch(
-     `/api/cctp/attestation?txHash=${encodeURIComponent(txHash)}`
-    );
-    const ad = await ar.json().catch(() => ({}));
-    if (ad?.status === "complete") {
-     attestText =
-      typeof ad.text === "string"
-       ? ad.text
-       : "CCTP attestation ready — destination mint can proceed.";
-     break;
-    }
-    if (ad?.status === "failed") break;
-   } catch {
-    /* keep polling */
-   }
-  }
-  if (attestText) setOutcomeLine(attestText);
- }
+ // Like swap: show success as soon as Stellar is done. Base mint tx
+ // resolves in the background (see useEffect → /api/cctp/complete).
  setStatus("success");
+ setActionComplete(true);
  return;
  }
 
@@ -1888,6 +2007,31 @@ export function TransactionActionCard({
  </div>
  </div>
 
+ {action.type === "cctp_bridge" && !actionComplete && status !== "success" && (
+ <div className="flex flex-wrap gap-1.5">
+  <span
+   className={cn(
+    "rounded-full border px-2 py-0.5 text-[11px] font-medium",
+    action.cctpStep === "burn" || cctpApproveHash
+     ? "border-green-500/40 text-green-600 dark:text-green-500"
+     : "border-primary bg-primary/10 text-primary"
+   )}
+  >
+   1 of 2
+  </span>
+  <span
+   className={cn(
+    "rounded-full border px-2 py-0.5 text-[11px] font-medium",
+    action.cctpStep === "burn"
+     ? "border-primary bg-primary/10 text-primary"
+     : "border-border text-muted-foreground"
+   )}
+  >
+   2 of 2
+  </span>
+ </div>
+ )}
+
  {steps && (
  <div className="flex flex-wrap gap-1.5">
  {steps.map((step, i) => {
@@ -1910,7 +2054,7 @@ export function TransactionActionCard({
  </div>
  )}
 
- {!actionComplete && (
+ {!actionComplete && status !== "success" && (
  <div className="text-sm space-y-1.5 text-muted-foreground">
  {action.sendAmount && action.sendAsset && action.type !== "steldex_remove_liquidity" && action.type !== "steldex_stake" && action.type !== "steldex_unstake" && action.type !== "steldex_claim" && (
  <div className="flex justify-between">
@@ -2370,14 +2514,25 @@ export function TransactionActionCard({
  )}
  </>
  )}
- <div className="flex justify-between">
- <span>Network</span>
- <span className="text-foreground">Stellar Testnet</span>
- </div>
- <div className="flex justify-between gap-2">
- <span>Protocol</span>
- <span className="font-medium text-foreground text-right">{confidence.protocol}</span>
- </div>
+ {action.type === "cctp_bridge" && action.destination ? (
+  <div className="flex justify-between gap-2 min-w-0">
+   <span className="shrink-0">To</span>
+   <span className="font-medium text-foreground text-right truncate min-w-0" title={action.destination}>
+    {cctpDestLabel(action.destAsset, action.marketHint)} · {truncateAddr(action.destination)}
+   </span>
+  </div>
+ ) : (
+  <>
+   <div className="flex justify-between">
+    <span>Network</span>
+    <span className="text-foreground">Stellar Testnet</span>
+   </div>
+   <div className="flex justify-between gap-2">
+    <span>Protocol</span>
+    <span className="font-medium text-foreground text-right">{confidence.protocol}</span>
+   </div>
+  </>
+ )}
  </div>
  )}
 
@@ -2404,7 +2559,10 @@ export function TransactionActionCard({
  </div>
  )}
 
- {status !== "success" && status !== "error" && !actionComplete && (
+ {status !== "success" &&
+  status !== "error" &&
+  !actionComplete &&
+  action.type !== "cctp_bridge" && (
  <div className="rounded-xl bg-orbit-gradient-subtle px-3 py-2.5 text-[11px] leading-relaxed text-muted-foreground ring-1 ring-primary/10">
  <p className="mb-1.5 font-medium text-foreground">Before you sign</p>
  <p className="mb-1.5 text-foreground/80">{confidence.walletScope}</p>
@@ -2426,10 +2584,15 @@ export function TransactionActionCard({
  ? `Step ${stepIndex + 1} done`
  : "Done on-chain"}
  </div>
- {outcomeLine && (
- <p className="text-sm text-foreground">{outcomeLine}</p>
+ {isCctpBridgeAction(action) ? (
+  <p className="text-sm text-foreground">
+   Bridged {action.sendAmount} USDC → {cctpDestLabel(action.destAsset, action.marketHint)}
+   {action.destination ? ` (${truncateAddr(action.destination)})` : ""}
+  </p>
+ ) : (
+  outcomeLine && <p className="text-sm text-foreground">{outcomeLine}</p>
  )}
- {beforeIdle && (
+ {beforeIdle && !isCctpBridgeAction(action) && (
  <p className="text-xs text-muted-foreground">
  Before: idle {beforeIdle}. Ask “What&apos;s earning?” to see the updated position book.
  </p>
@@ -2459,6 +2622,34 @@ export function TransactionActionCard({
  );
  })}
  </ul>
+ ) : isCctpBridgeAction(action) ? (
+  <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+   {hash && (
+    <a
+     href={`https://stellar.expert/explorer/testnet/tx/${hash}`}
+     target="_blank"
+     rel="noreferrer"
+     className="text-xs text-primary flex items-center gap-1 hover:underline"
+    >
+     Stellar <ExternalLink className="w-3 h-3" />
+    </a>
+   )}
+   {cctpDestTxHash ? (
+    <a
+     href={cctpDestTxExplorerUrl(action.destAsset, cctpDestTxHash, action.marketHint)}
+     target="_blank"
+     rel="noreferrer"
+     className="text-xs text-primary flex items-center gap-1 hover:underline"
+    >
+     {cctpDestShortLabel(action.destAsset, action.marketHint)}{" "}
+     <ExternalLink className="w-3 h-3" />
+    </a>
+   ) : (
+    <span className="text-xs text-muted-foreground">
+     {cctpDestShortLabel(action.destAsset, action.marketHint)} · confirming…
+    </span>
+   )}
+  </div>
  ) : (
  hash && (
  <a
@@ -2527,6 +2718,10 @@ export function TransactionActionCard({
  ? progress ?? "Submitting…"
  : action.type === "nft_create_collection" && !collectionSetupReady(action)
  ? "Complete collection details"
+ : action.type === "cctp_bridge" && action.cctpStep === "approve"
+ ? "Confirm (1 of 2)"
+ : action.type === "cctp_bridge"
+ ? "Confirm (2 of 2)"
  : walletType === "internal"
  ? "Sign with Orbit wallet"
  : "Sign with Freighter"}

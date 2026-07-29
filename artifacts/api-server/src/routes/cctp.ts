@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
 import {
+  completeCctpDestination,
   fetchCctpAttestation,
   formatCctpHelp,
   getCctpAllowanceStatus,
@@ -149,6 +150,39 @@ router.post("/cctp/attestation", async (req, res): Promise<void> => {
     res.json(result);
   } catch (err: any) {
     res.status(502).json({ error: err?.message ?? "attestation failed" });
+  }
+});
+
+/** Poll Iris + optionally relay receiveMessage; returns destination mint tx when ready. */
+router.post("/cctp/complete", async (req, res): Promise<void> => {
+  const txHash =
+    typeof req.body?.txHash === "string"
+      ? req.body.txHash.trim()
+      : typeof req.body?.hash === "string"
+        ? req.body.hash.trim()
+        : typeof req.body?.stellarTxHash === "string"
+          ? req.body.stellarTxHash.trim()
+          : "";
+  const destChain =
+    typeof req.body?.destChain === "string"
+      ? req.body.destChain
+      : typeof req.body?.destAsset === "string"
+        ? req.body.destAsset
+        : typeof req.body?.marketHint === "string"
+          ? req.body.marketHint
+          : "base";
+  if (!txHash) {
+    res.status(400).json({ error: "txHash required" });
+    return;
+  }
+  try {
+    const result = await completeCctpDestination({
+      stellarTxHash: txHash,
+      destChain: resolveCctpDest(destChain),
+    });
+    res.json(result);
+  } catch (err: any) {
+    res.status(502).json({ error: err?.message ?? "CCTP complete failed" });
   }
 });
 

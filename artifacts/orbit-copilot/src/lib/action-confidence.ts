@@ -69,7 +69,7 @@ export function outcomeSummary(action: ChatAction): string {
  action.type === "send"
  ? `Sent ${action.sendAmount ?? ""} ${action.sendAsset ?? ""}`
  : action.type === "cctp_bridge"
- ? `Bridged ${action.sendAmount ?? ""} USDC → ${action.destAsset ?? "EVM"} (${action.destination ?? ""})`
+ ? `Bridged ${action.sendAmount ?? ""} USDC → ${action.destAsset ?? "Base"}`
  : action.type.includes("swap")
  ? `Swapped ${action.sendAmount ?? ""} ${action.sendAsset ?? ""} → ${action.destAsset ?? ""}`
  : action.type.includes("liquidity")
@@ -89,7 +89,7 @@ export function outcomeSummary(action: ChatAction): string {
  return `${title.trim()} - confirmed on Stellar Testnet. Ask “what’s my ${action.destAsset} balance?” to verify (Soroban tokens).`;
  }
  if (action.type === "cctp_bridge") {
- return `${title.trim()} - burn confirmed on Stellar Testnet. Ask “cctp attestation <txHash>” in ~30s for Iris status.`;
+ return `Bridged ${action.sendAmount ?? ""} USDC → ${action.destAsset ?? "Base"}`.trim();
  }
  return `${title.trim()} - confirmed on Stellar Testnet`;
 }

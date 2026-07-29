@@ -59,6 +59,8 @@ type ChatMessage = {
  action?: ChatAction;
  actions?: ChatAction[];
  gallery?: NftGalleryPayload;
+ /** Set after the user signs — survives page refresh. */
+ completed?: CompletedOutcome;
  } | null;
  createdAt: string;
 };
@@ -72,6 +74,53 @@ type ChatSession = {
 
 function sessionStorageKey(wallet: string | null): string {
  return `orbit-active-session-${wallet ?? "anon"}`;
+}
+
+function completedStorageKey(msgId: number): string {
+ return `orbit-msg-completed-${msgId}`;
+}
+
+function readLocalCompleted(msgId: number): CompletedOutcome | null {
+ try {
+  const raw = localStorage.getItem(completedStorageKey(msgId));
+  if (!raw) return null;
+  const parsed = JSON.parse(raw) as CompletedOutcome;
+  if (!parsed || typeof parsed.summary !== "string") return null;
+  return {
+   hash: typeof parsed.hash === "string" ? parsed.hash : null,
+   summary: parsed.summary,
+  };
+ } catch {
+  return null;
+ }
+}
+
+function writeLocalCompleted(msgId: number, outcome: CompletedOutcome): void {
+ try {
+  localStorage.setItem(completedStorageKey(msgId), JSON.stringify(outcome));
+ } catch {
+  /* ignore quota */
+ }
+}
+
+function completedFromMetadata(
+ metadata: ChatMessage["metadata"]
+): CompletedOutcome | null {
+ const c = metadata?.completed;
+ if (!c || typeof c.summary !== "string" || !c.summary.trim()) return null;
+ return {
+  hash: typeof c.hash === "string" ? c.hash : null,
+  summary: c.summary,
+ };
+}
+
+function persistMessageCompleted(msgId: number, outcome: CompletedOutcome): void {
+ writeLocalCompleted(msgId, outcome);
+ void fetch(`/api/chat/messages/${msgId}`, {
+  method: "PATCH",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ completed: outcome }),
+ }).catch(() => {});
 }
 
 function readStoredSessionId(wallet: string | null): number | null {
@@ -253,10 +302,26 @@ export default function ChatPage() {
  const [sendError, setSendError] = useState<string | null>(null);
  const [streamingText, setStreamingText] = useState<string | null>(null);
  const lastSentRef = useRef<string | null>(null);
- /** Persist completed tx cards so remounts cannot reopen the sign button. */
+ /** Persist completed tx cards so remounts / refresh cannot reopen the sign button. */
  const [completedByMsgId, setCompletedByMsgId] = useState<
  Record<number, CompletedOutcome>
  >({});
+
+ // Hydrate Done receipts from DB metadata + localStorage after history loads.
+ useEffect(() => {
+  if (!serverMessages.length) return;
+  setCompletedByMsgId((prev) => {
+   const next = { ...prev };
+   for (const m of serverMessages) {
+    if (next[m.id]) continue;
+    const fromMeta = completedFromMetadata(m.metadata);
+    const fromLocal = readLocalCompleted(m.id);
+    const outcome = fromMeta ?? fromLocal;
+    if (outcome) next[m.id] = outcome;
+   }
+   return next;
+  });
+ }, [serverMessages]);
 
  const sendMutation = useMutation({
  mutationFn: async ({
@@ -721,13 +786,19 @@ export default function ChatPage() {
  key={`${msg.id}-queue`}
  action={actionsList[0]!}
  queue={actionsList}
- completed={completedByMsgId[msg.id]}
+ completed={
+  completedByMsgId[msg.id] ??
+  completedFromMetadata(msg.metadata) ??
+  readLocalCompleted(msg.id)
+ }
  onOutcome={(info) => {
  if (info?.terminal) {
+ const outcome = { hash: info.hash, summary: info.summary };
  setCompletedByMsgId((prev) => ({
  ...prev,
- [msg.id]: { hash: info.hash, summary: info.summary },
+ [msg.id]: outcome,
  }));
+ persistMessageCompleted(msg.id, outcome);
  }
  onTxOutcome(info);
  }}
@@ -739,13 +810,19 @@ export default function ChatPage() {
  <TransactionActionCard
  key={`${msg.id}-action-${actionsList[0]!.type}-${actionsList[0]!.destAsset ?? actionsList[0]!.marketHint ?? ""}`}
  action={actionsList[0]!}
- completed={completedByMsgId[msg.id]}
+ completed={
+  completedByMsgId[msg.id] ??
+  completedFromMetadata(msg.metadata) ??
+  readLocalCompleted(msg.id)
+ }
  onOutcome={(info) => {
  if (info?.terminal) {
+ const outcome = { hash: info.hash, summary: info.summary };
  setCompletedByMsgId((prev) => ({
  ...prev,
- [msg.id]: { hash: info.hash, summary: info.summary },
+ [msg.id]: outcome,
  }));
+ persistMessageCompleted(msg.id, outcome);
  }
  onTxOutcome(info);
  }}
