@@ -2207,7 +2207,7 @@ export function TransactionActionCard({
  {mediaError && (
  <p className="text-[11px] text-destructive">{mediaError}</p>
  )}
- {(action.type === "nft_create_collection" || action.type === "nft_media_pack") && (
+ {(action.type === "nft_create_collection") && (
  <div className="space-y-1.5 pt-1 border-t border-border/60">
  <p className="text-[11px] font-medium text-foreground">
  Unique drop (ZIP media pack)
