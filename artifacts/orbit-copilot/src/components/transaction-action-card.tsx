@@ -108,6 +108,7 @@ export interface ChatAction {
     | "defindex_withdraw"
     | "meridian_deposit"
     | "meridian_withdraw"
+    | "cctp_approve"
     | "cctp_bridge"
     | "aquarius_swap"
  | "connect_wallet"
@@ -500,6 +501,16 @@ case "meridian_withdraw":
   endpoint = "/api/meridian/withdraw";
   body = { ...body, amount: action.sendAmount, shares: action.sendAmount };
   break;
+case "cctp_approve":
+  endpoint = "/api/cctp/approve";
+  body = {
+    ...body,
+    amount: action.sendAmount,
+    destination: action.destination,
+    destAsset: action.destAsset,
+    marketHint: action.marketHint,
+  };
+  break;
 case "cctp_bridge":
   endpoint = "/api/cctp/bridge";
   body = {
@@ -508,6 +519,7 @@ case "cctp_bridge":
     destination: action.destination,
     destAsset: action.destAsset,
     marketHint: action.marketHint,
+    burnOnly: true,
   };
   break;
  case "blend_usdc_swap":
@@ -631,6 +643,7 @@ function isOrbitNativeAction(type: ChatAction["type"]) {
     type === "defindex_withdraw" ||
     type === "meridian_deposit" ||
     type === "meridian_withdraw" ||
+    type === "cctp_approve" ||
     type === "cctp_bridge" ||
     type === "blend_claim" ||
  type === "blend_usdc_swap" ||
@@ -712,6 +725,8 @@ function actionTitle(action: ChatAction): string {
       return "Meridian Deposit";
     case "meridian_withdraw":
       return "Meridian Withdraw";
+    case "cctp_approve":
+      return "Approve USDC for CCTP";
     case "cctp_bridge":
       return "CCTP Bridge (USDC)";
     case "steldex_swap":
@@ -1285,6 +1300,68 @@ export function TransactionActionCard({
  }
  return;
  }
+
+ // CCTP step 1/2: approve USDC spend, then continue to burn card
+ if (action.type === "cctp_approve") {
+  setProgress("Refreshing USDC approve…");
+  const rebuilt = await rebuildOrbitNativeXdr(action, publicKey, slippageBps);
+  setAction((prev) => ({
+   ...prev,
+   xdr: rebuilt.xdr,
+   networkPassphrase: rebuilt.networkPassphrase ?? prev.networkPassphrase,
+  }));
+  setStatus("signing");
+  setProgress("Sign to approve CCTP…");
+  const signedXdr = await signTransaction(
+   rebuilt.xdr,
+   rebuilt.networkPassphrase ||
+    action.networkPassphrase ||
+    STELLAR_NETWORK_PASSPHRASE ||
+    STELDEX_NETWORK_PASSPHRASE
+  );
+  setStatus("submitting");
+  setProgress("Submitting approve…");
+  const { submitSignedToSoroban } = await import("@/lib/steldex-submit");
+  const txHash = await submitSignedToSoroban(signedXdr);
+  setHash(txHash);
+  if (action.pendingAction) {
+   const next = action.pendingAction;
+   const amt = action.sendAmount ?? next.sendAmount ?? "";
+   setProgress("Confirming USDC allowance…");
+   for (let i = 0; i < 12; i++) {
+    await new Promise((r) => setTimeout(r, i === 0 ? 1500 : 2000));
+    try {
+     const ar = await fetch(
+      `/api/cctp/allowance?walletAddress=${encodeURIComponent(publicKey)}&amount=${encodeURIComponent(amt)}`
+     );
+     const ad = await ar.json().catch(() => ({}));
+     if (ad?.ready) break;
+    } catch {
+     /* keep polling */
+    }
+   }
+   setAction({
+    ...next,
+    type: "cctp_bridge",
+    sendAmount: next.sendAmount ?? action.sendAmount,
+    sendAsset: "USDC",
+    destination: next.destination ?? action.destination,
+    destAsset: next.destAsset ?? action.destAsset,
+    marketHint: next.marketHint ?? action.marketHint,
+   });
+   setStatus("idle");
+   setHash(null);
+   setError(null);
+   setProgress(null);
+   setStepInfo(null);
+   setOutcomeLine(null);
+  } else {
+   setStatus("success");
+   setActionComplete(true);
+  }
+  return;
+ }
+
  // Orbit-native - always rebuild XDR so chat-stale timebounds never cause tx_too_late
  if (isOrbitNativeAction(action.type)) {
  setProgress("Refreshing transaction…");

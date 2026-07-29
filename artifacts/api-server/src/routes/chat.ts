@@ -452,6 +452,7 @@ interface ChatAction {
     | "defindex_withdraw"
     | "meridian_deposit"
     | "meridian_withdraw"
+    | "cctp_approve"
     | "cctp_bridge"
     | "aquarius_swap"
  | "connect_wallet"
@@ -2818,7 +2819,7 @@ async function getDeterministicResponse(
       return {
         text: prepared.message,
         action: {
-          type: "cctp_bridge",
+          type: prepared.type,
           sendAmount: prepared.sendAmount,
           sendAsset: prepared.sendAsset,
           destAsset: prepared.destAsset,
@@ -2827,6 +2828,9 @@ async function getDeterministicResponse(
           poolContract: prepared.poolContract,
           xdr: prepared.xdr,
           networkPassphrase: prepared.networkPassphrase,
+          ...(prepared.type === "cctp_approve" && prepared.pendingAction
+            ? { pendingAction: prepared.pendingAction as ChatAction }
+            : {}),
         } as ChatAction,
       };
     } catch (err: any) {

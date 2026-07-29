@@ -353,6 +353,7 @@ export async function enrichChatAction(
     type === "nft_transfer" ||
     type === "defindex_deposit" ||
     type === "defindex_withdraw" ||
+    type === "cctp_approve" ||
     type === "cctp_bridge"
   ) {
     const wallet =
@@ -498,7 +499,7 @@ export async function enrichChatAction(
           networkPassphrase: built.networkPassphrase,
         } as EnrichedAction;
       }
-      if (type === "cctp_bridge") {
+      if (type === "cctp_bridge" || type === "cctp_approve") {
         const { prepareCctpBridge } = await import("./cctp");
         if (!sendAmount || !destination) return { type, ...raw } as EnrichedAction;
         const built = await prepareCctpBridge({
@@ -506,10 +507,11 @@ export async function enrichChatAction(
           amount: sendAmount,
           destinationEvm: destination,
           destChain: String(raw.destAsset ?? raw.marketHint ?? destAsset ?? "base"),
+          burnOnly: type === "cctp_bridge" && Boolean(raw.burnOnly),
         });
         return {
           ...raw,
-          type,
+          type: built.type,
           sendAmount: built.sendAmount,
           sendAsset: built.sendAsset,
           destAsset: built.destAsset,
@@ -518,6 +520,9 @@ export async function enrichChatAction(
           poolContract: built.poolContract,
           xdr: built.xdr,
           networkPassphrase: built.networkPassphrase,
+          ...(built.type === "cctp_approve" && built.pendingAction
+            ? { pendingAction: built.pendingAction as EnrichedAction }
+            : {}),
         } as EnrichedAction;
       }
       if (type === "perp_close") {

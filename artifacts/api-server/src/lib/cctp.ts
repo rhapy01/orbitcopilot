@@ -10,7 +10,7 @@ import { logger } from "./logger";
 import { NETWORK_PASSPHRASE } from "./stellar";
 import {
   TESTNET_USDC_SAC,
-  buildContractInvokeOps,
+  buildContractInvoke,
   simulateContractView,
 } from "./onchain";
 
@@ -96,7 +96,12 @@ function mapCctpSimError(err: unknown): Error {
   const msg = String((err as any)?.message ?? err ?? "");
   if (/Error\(Contract,\s*#9\)/i.test(msg)) {
     return new Error(
-      "CCTP burn failed (USDC #9): not enough Circle USDC balance, or TokenMessenger is not approved to spend it. Orbit will include an approve step — retry the bridge. If it still fails, fund USDC via \"faucet USDC\" / a swap."
+      "CCTP burn failed (USDC #9): not enough Circle USDC, or TokenMessenger is not approved yet. Sign the approve step first, then the burn."
+    );
+  }
+  if (/more than one operation/i.test(msg)) {
+    return new Error(
+      "CCTP needs two separate signatures (approve, then burn). Retry the bridge — Orbit will show step 1 first."
     );
   }
   if (/Error\(Contract,\s*#7105\)/i.test(msg) || /InsufficientMaxFee/i.test(msg)) {
@@ -174,12 +179,33 @@ async function latestLedgerSequence(): Promise<number> {
   return Number(latest.sequence);
 }
 
-export async function prepareCctpBridge(input: {
-  walletAddress: string;
-  amount: string;
-  destinationEvm: string;
-  destChain?: string;
-}): Promise<{
+export type CctpBridgePending = {
+  type: "cctp_bridge";
+  sendAmount: string;
+  sendAsset: "USDC";
+  destAsset: string;
+  destination: string;
+  marketHint: string;
+  poolContract: string;
+  destinationDomain: number;
+  sourceDomain: number;
+};
+
+export type CctpApproveAction = {
+  type: "cctp_approve";
+  sendAmount: string;
+  sendAsset: "USDC";
+  destAsset: string;
+  destination: string;
+  marketHint: string;
+  poolContract: string;
+  xdr: string;
+  networkPassphrase: string;
+  message: string;
+  pendingAction: CctpBridgePending;
+};
+
+export type CctpBridgeAction = {
   type: "cctp_bridge";
   sendAmount: string;
   sendAsset: "USDC";
@@ -192,7 +218,103 @@ export async function prepareCctpBridge(input: {
   message: string;
   destinationDomain: number;
   sourceDomain: number;
-}> {
+};
+
+async function buildUsdcApproveXdr(input: {
+  walletAddress: string;
+  amount: bigint;
+}): Promise<{ xdr: string; networkPassphrase: string }> {
+  const { Address, nativeToScVal } = await import("@stellar/stellar-sdk");
+  const ledger = await latestLedgerSequence();
+  const expirationLedger = ledger + 100_000;
+  return buildContractInvoke({
+    sourcePublicKey: input.walletAddress,
+    contractId: CCTP_STELLAR.usdc,
+    method: "approve",
+    args: [
+      Address.fromString(input.walletAddress).toScVal(),
+      Address.fromString(CCTP_STELLAR.tokenMessengerMinter).toScVal(),
+      nativeToScVal(input.amount.toString(), { type: "i128" }),
+      nativeToScVal(expirationLedger, { type: "u32" }),
+    ],
+  });
+}
+
+/** Build USDC approve for TokenMessengerMinter (single-op — Freighter/Soroban constraint). */
+export async function prepareCctpApprove(input: {
+  walletAddress: string;
+  amount: string;
+  destinationEvm: string;
+  destChain?: string;
+}): Promise<CctpApproveAction> {
+  if (!input.walletAddress?.startsWith("G")) {
+    throw new Error("Connect a Stellar wallet first");
+  }
+  const destChain = resolveCctpDest(input.destChain);
+  const destMeta = CCTP_DEST_DOMAINS[destChain];
+  const destination = normalizeEvmAddress(input.destinationEvm);
+  const amount = parseUsdcToStroops(input.amount);
+  const human = stroopsToHuman(amount);
+
+  let built: { xdr: string; networkPassphrase: string };
+  try {
+    built = await buildUsdcApproveXdr({ walletAddress: input.walletAddress, amount });
+  } catch (err) {
+    throw mapCctpSimError(err);
+  }
+
+  return {
+    type: "cctp_approve",
+    sendAmount: human,
+    sendAsset: "USDC",
+    destAsset: destChain,
+    destination,
+    marketHint: `${destMeta.label} · ${destination}`,
+    poolContract: CCTP_STELLAR.usdc,
+    xdr: built.xdr,
+    networkPassphrase: built.networkPassphrase || NETWORK_PASSPHRASE,
+    message: [
+      `CCTP step 1/2: approve Circle’s TokenMessenger to spend **${human} USDC**.`,
+      `After this, sign the burn to bridge → **${destMeta.label}** (\`${destination}\`).`,
+    ].join(" "),
+    pendingAction: {
+      type: "cctp_bridge",
+      sendAmount: human,
+      sendAsset: "USDC",
+      destAsset: destChain,
+      destination,
+      marketHint: `${destMeta.label} · ${destination}`,
+      poolContract: CCTP_STELLAR.tokenMessengerMinter,
+      destinationDomain: destMeta.domain,
+      sourceDomain: CCTP_STELLAR.domain,
+    },
+  };
+}
+
+export async function getCctpAllowanceStatus(input: {
+  walletAddress: string;
+  amount: string;
+}): Promise<{ allowance: string; needed: string; ready: boolean }> {
+  const amount = parseUsdcToStroops(input.amount);
+  const allowance = await readUsdcAllowance(
+    input.walletAddress,
+    CCTP_STELLAR.tokenMessengerMinter
+  );
+  return {
+    allowance: stroopsToHuman(allowance),
+    needed: stroopsToHuman(amount),
+    ready: allowance >= amount,
+  };
+}
+
+export async function prepareCctpBridge(input: {
+  walletAddress: string;
+  amount: string;
+  destinationEvm: string;
+  destChain?: string;
+  /** When true, skip the approve gate (caller already approved or is rebuilding burn only). */
+  burnOnly?: boolean;
+}): Promise<CctpApproveAction | CctpBridgeAction> {
   if (!input.walletAddress?.startsWith("G")) {
     throw new Error("Connect a Stellar wallet first");
   }
@@ -215,6 +337,22 @@ export async function prepareCctpBridge(input: {
     logger.warn({ err }, "CCTP balance check skipped");
   }
 
+  // Soroban wallets reject multi-op txs — approve is a separate single-op card first.
+  if (!input.burnOnly) {
+    const allowance = await readUsdcAllowance(
+      input.walletAddress,
+      CCTP_STELLAR.tokenMessengerMinter
+    );
+    if (allowance < amount) {
+      return prepareCctpApprove({
+        walletAddress: input.walletAddress,
+        amount: input.amount,
+        destinationEvm: destination,
+        destChain,
+      });
+    }
+  }
+
   // Max fee in local (7-dec) units — must be < amount and cover destination min fee.
   const minFee = await readMinFeeLocal(input.walletAddress, amount);
   let maxFee = amount / 1000n;
@@ -224,60 +362,31 @@ export async function prepareCctpBridge(input: {
 
   const { Address, nativeToScVal, xdr } = await import("@stellar/stellar-sdk");
   const mintRecipient = evmAddressToBytes32(destination);
-  // destination_caller = 0 → anyone may call receiveMessage on the destination domain
   const destinationCaller = zeroBytes32();
-  const minFinality = 2000; // standard finality
-
-  const ops: Array<{ contractId: string; method: string; args: import("@stellar/stellar-sdk").xdr.ScVal[] }> =
-    [];
-
-  // CCTP burns via transfer_from — approve TokenMessengerMinter when allowance is short.
-  const allowance = await readUsdcAllowance(
-    input.walletAddress,
-    CCTP_STELLAR.tokenMessengerMinter
-  );
-  if (allowance < amount) {
-    const ledger = await latestLedgerSequence();
-    const expirationLedger = ledger + 100_000;
-    ops.push({
-      contractId: CCTP_STELLAR.usdc,
-      method: "approve",
-      args: [
-        Address.fromString(input.walletAddress).toScVal(),
-        Address.fromString(CCTP_STELLAR.tokenMessengerMinter).toScVal(),
-        nativeToScVal(amount.toString(), { type: "i128" }),
-        nativeToScVal(expirationLedger, { type: "u32" }),
-      ],
-    });
-  }
-
-  ops.push({
-    contractId: CCTP_STELLAR.tokenMessengerMinter,
-    method: "deposit_for_burn",
-    args: [
-      Address.fromString(input.walletAddress).toScVal(),
-      nativeToScVal(amount.toString(), { type: "i128" }),
-      nativeToScVal(destMeta.domain, { type: "u32" }),
-      xdr.ScVal.scvBytes(mintRecipient),
-      Address.fromString(CCTP_STELLAR.usdc).toScVal(),
-      xdr.ScVal.scvBytes(destinationCaller),
-      nativeToScVal(maxFee.toString(), { type: "i128" }),
-      nativeToScVal(minFinality, { type: "u32" }),
-    ],
-  });
+  const minFinality = 2000;
 
   let built: { xdr: string; networkPassphrase: string };
   try {
-    built = await buildContractInvokeOps({
+    built = await buildContractInvoke({
       sourcePublicKey: input.walletAddress,
-      ops,
+      contractId: CCTP_STELLAR.tokenMessengerMinter,
+      method: "deposit_for_burn",
+      args: [
+        Address.fromString(input.walletAddress).toScVal(),
+        nativeToScVal(amount.toString(), { type: "i128" }),
+        nativeToScVal(destMeta.domain, { type: "u32" }),
+        xdr.ScVal.scvBytes(mintRecipient),
+        Address.fromString(CCTP_STELLAR.usdc).toScVal(),
+        xdr.ScVal.scvBytes(destinationCaller),
+        nativeToScVal(maxFee.toString(), { type: "i128" }),
+        nativeToScVal(minFinality, { type: "u32" }),
+      ],
     });
   } catch (err) {
     throw mapCctpSimError(err);
   }
 
   const human = stroopsToHuman(amount);
-  const needsApprove = ops.length > 1;
   return {
     type: "cctp_bridge",
     sendAmount: human,
@@ -293,10 +402,9 @@ export async function prepareCctpBridge(input: {
     message: [
       `Circle CCTP: bridge **${human} USDC** from Stellar Testnet → **${destMeta.label}**.`,
       `Recipient: \`${destination}\`.`,
-      needsApprove
-        ? "This tx first approves Circle’s TokenMessenger to spend your USDC, then burns for the bridge."
-        : "Sign to burn on Stellar.",
-      `After confirmation Orbit polls Circle Iris for the attestation so USDC can be minted on ${destMeta.label}.`,
+      "Sign to burn on Stellar. After confirmation Orbit polls Circle Iris for the attestation so USDC can be minted on " +
+        destMeta.label +
+        ".",
     ].join(" "),
   };
 }
