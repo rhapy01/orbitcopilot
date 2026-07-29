@@ -1,7 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Layout } from "@/components/layout";
-import { Loader2, Activity, Users, MessageSquare, Star, Download } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Loader2, Activity, Users, MessageSquare, Star } from "lucide-react";
 
 type Stats = {
  events: {
@@ -50,7 +49,6 @@ export default function StatsPage() {
  <Layout>
  <div className="flex-1 overflow-y-auto">
  <div className="mx-auto w-full max-w-3xl space-y-6 px-4 py-6">
- <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
  <div>
  <h1 className="text-2xl font-semibold tracking-tight">
  <span className="text-orbit-gradient">Product analytics</span>
@@ -59,26 +57,6 @@ export default function StatsPage() {
  Live usage for monitoring and Level 4 validation (wallet events +
  feedback). Balances stay on-chain.
  </p>
- </div>
- <div className="flex flex-wrap gap-2">
- <Button asChild size="sm" variant="outline" className="rounded-xl">
- <a href="/api/feedback/export?format=csv" download>
- <Download className="mr-1.5 h-3.5 w-3.5" />
- Feedback CSV
- </a>
- </Button>
- <Button asChild size="sm" variant="outline" className="rounded-xl">
- <a href="/api/transactions/export?format=csv" download>
- <Download className="mr-1.5 h-3.5 w-3.5" />
- Transactions CSV
- </a>
- </Button>
- <Button asChild size="sm" variant="ghost" className="rounded-xl text-xs">
- <a href="/api/feedback/export?format=txt" download>
- Feedback TXT
- </a>
- </Button>
- </div>
  </div>
 
  {isLoading && (
