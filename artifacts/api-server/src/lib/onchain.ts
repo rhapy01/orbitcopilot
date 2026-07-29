@@ -84,35 +84,80 @@ export async function buildContractInvoke(input: {
  method: string;
  args: xdr.ScVal[];
 }): Promise<{ xdr: string; networkPassphrase: string }> {
+ return buildContractInvokeOps({
+  sourcePublicKey: input.sourcePublicKey,
+  ops: [{ contractId: input.contractId, method: input.method, args: input.args }],
+ });
+}
+
+/** Build an unsigned multi-op Soroban tx (e.g. approve then deposit_for_burn). */
+export async function buildContractInvokeOps(input: {
+ sourcePublicKey: string;
+ ops: Array<{ contractId: string; method: string; args: xdr.ScVal[] }>;
+}): Promise<{ xdr: string; networkPassphrase: string }> {
+ if (!input.ops.length) throw new Error("No contract operations to build");
  const { Contract, TransactionBuilder, Networks, BASE_FEE } = await import(
- "@stellar/stellar-sdk"
+  "@stellar/stellar-sdk"
  );
  const { Server, assembleTransaction } = await import("@stellar/stellar-sdk/rpc");
 
  const rpc = new Server(SOROBAN_RPC);
  const account = await rpc.getAccount(input.sourcePublicKey);
- const contract = new Contract(input.contractId);
- const op = contract.call(input.method, ...input.args);
-
- const tx = new TransactionBuilder(account, {
- fee: BASE_FEE,
- networkPassphrase: Networks.TESTNET,
- })
- .addOperation(op)
+ const builder = new TransactionBuilder(account, {
+  fee: BASE_FEE,
+  networkPassphrase: Networks.TESTNET,
+ });
+ for (const op of input.ops) {
+  const contract = new Contract(op.contractId);
+  builder.addOperation(contract.call(op.method, ...op.args));
+ }
  // Users often take >2 min reviewing Freighter - short bounds cause tx_too_late.
- .setTimeout(300)
- .build();
+ const tx = builder.setTimeout(300).build();
 
  const simulated = await rpc.simulateTransaction(tx);
  if ((simulated as any)?.error) {
- throw new Error(`Simulation failed: ${(simulated as any).error}`);
+  throw new Error(`Simulation failed: ${(simulated as any).error}`);
  }
 
  const assembled = assembleTransaction(tx, simulated).build();
  return {
- xdr: assembled.toXDR(),
- networkPassphrase: NETWORK_PASSPHRASE,
+  xdr: assembled.toXDR(),
+  networkPassphrase: NETWORK_PASSPHRASE,
  };
+}
+
+/** Simulate a view/call and return the native retval (or throw). */
+export async function simulateContractView(input: {
+ sourcePublicKey: string;
+ contractId: string;
+ method: string;
+ args: xdr.ScVal[];
+}): Promise<unknown> {
+ const {
+  Contract,
+  TransactionBuilder,
+  Networks,
+  BASE_FEE,
+  scValToNative,
+ } = await import("@stellar/stellar-sdk");
+ const { Server } = await import("@stellar/stellar-sdk/rpc");
+ const rpc = new Server(SOROBAN_RPC);
+ const account = await rpc.getAccount(input.sourcePublicKey);
+ const contract = new Contract(input.contractId);
+ const tx = new TransactionBuilder(account, {
+  fee: BASE_FEE,
+  networkPassphrase: Networks.TESTNET,
+ })
+  .addOperation(contract.call(input.method, ...input.args))
+  .setTimeout(30)
+  .build();
+ const sim = await rpc.simulateTransaction(tx);
+ if ((sim as any)?.error) {
+  throw new Error(`Simulation failed: ${(sim as any).error}`);
+ }
+ const retval = (sim as any)?.result?.retval;
+ if (retval == null) return null;
+ return scValToNative(retval);
 }
 
 /** Soroban unit enum variant: vec [Symbol("Yes")] */
