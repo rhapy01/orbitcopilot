@@ -64,8 +64,13 @@ Black Belt (Level 6) is later: Twitter, +30 users, mainnet, audits — not Blue 
 | Full JSON | `GET /api/feedback/export` |
 | Full CSV | `GET /api/feedback/export?format=csv` |
 | Full TXT | `GET /api/feedback/export?format=txt` |
+| **Platform txs CSV** | `GET /api/transactions/export?format=csv` |
+| Platform txs JSON | `GET /api/transactions/export` |
 
 ```bash
 curl -o orbit-feedback.csv "https://orbitpilot.vercel.app/api/feedback/export?format=csv"
 curl -o orbit-feedback.txt "https://orbitpilot.vercel.app/api/feedback/export?format=txt"
+curl -o orbit-platform-transactions.csv "https://orbitpilot.vercel.app/api/transactions/export?format=csv"
+# Or local DB dump:
+node scripts/export-platform-txs.mjs
 ```

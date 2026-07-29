@@ -1,5 +1,5 @@
 import { db, walletEventsTable, feedbackTable } from "@workspace/db";
-import { sql, desc } from "drizzle-orm";
+import { sql, desc, inArray } from "drizzle-orm";
 
 let schemaReady: Promise<void> | null = null;
 
@@ -274,6 +274,153 @@ export async function listAllFeedback(): Promise<
  walletPublicKey: f.walletPublicKey,
  createdAt: f.createdAt.toISOString(),
  }));
+}
+
+export type TxPlatformRow = {
+ id: number;
+ source: "wallet_event" | "action_outcome" | "beta_nft_claim";
+ eventType: string;
+ walletPublicKey: string | null;
+ actionType: string | null;
+ summary: string | null;
+ txHash: string | null;
+ explorerUrl: string | null;
+ metadata: Record<string, unknown> | null;
+ createdAt: string;
+};
+
+function metaString(
+ meta: Record<string, unknown> | null | undefined,
+ key: string
+): string | null {
+ if (!meta) return null;
+ const v = meta[key];
+ return typeof v === "string" && v.trim() ? v.trim() : null;
+}
+
+function stellarExpertTxUrl(hash: string | null): string | null {
+ if (!hash || !/^[a-fA-F0-9]{64}$/.test(hash)) return null;
+ return `https://stellar.expert/explorer/testnet/tx/${hash}`;
+}
+
+/** All platform-processed txs: submits, outcomes, and beta NFT claims. */
+export async function listAllPlatformTransactions(): Promise<TxPlatformRow[]> {
+ await ensureProductSchema();
+
+ const eventRows = await db
+ .select({
+ id: walletEventsTable.id,
+ walletPublicKey: walletEventsTable.walletPublicKey,
+ eventType: walletEventsTable.eventType,
+ metadata: walletEventsTable.metadata,
+ createdAt: walletEventsTable.createdAt,
+ })
+ .from(walletEventsTable)
+ .where(inArray(walletEventsTable.eventType, ["tx_submit", "tx_sign"]))
+ .orderBy(desc(walletEventsTable.createdAt));
+
+ const outcomeRes = await db.execute(sql`
+ SELECT id, wallet_public_key AS "walletPublicKey", summary,
+ tx_hash AS "txHash", before_idle AS "beforeIdle",
+ after_note AS "afterNote", created_at AS "createdAt"
+ FROM action_outcomes
+ ORDER BY created_at DESC
+ `);
+
+ const betaRes = await db.execute(sql`
+ SELECT wallet_public_key AS "walletPublicKey", claim_tx_hash AS "txHash",
+ claim_token_id AS "tokenId", claimed_at AS "createdAt"
+ FROM beta_nft_eligibility
+ WHERE claimed_at IS NOT NULL AND claim_tx_hash IS NOT NULL
+ ORDER BY claimed_at DESC
+ `);
+
+ const rows: TxPlatformRow[] = [];
+
+ for (const r of eventRows) {
+ const meta =
+ r.metadata && typeof r.metadata === "object"
+ ? (r.metadata as Record<string, unknown>)
+ : null;
+ const txHash =
+ metaString(meta, "txHash") ??
+ metaString(meta, "hash") ??
+ metaString(meta, "tx_hash");
+ const actionType =
+ metaString(meta, "actionType") ??
+ metaString(meta, "outcome") ??
+ null;
+ rows.push({
+ id: r.id,
+ source: "wallet_event",
+ eventType: r.eventType,
+ walletPublicKey: r.walletPublicKey,
+ actionType,
+ summary: metaString(meta, "outcome"),
+ txHash,
+ explorerUrl: stellarExpertTxUrl(txHash),
+ metadata: meta,
+ createdAt: r.createdAt.toISOString(),
+ });
+ }
+
+ for (const raw of outcomeRes.rows ?? []) {
+ const r = raw as {
+ id?: number;
+ walletPublicKey?: string;
+ summary?: string;
+ txHash?: string | null;
+ createdAt?: Date | string;
+ };
+ const txHash =
+ typeof r.txHash === "string" && r.txHash.trim() ? r.txHash.trim() : null;
+ const createdAt =
+ r.createdAt instanceof Date
+ ? r.createdAt.toISOString()
+ : String(r.createdAt ?? "");
+ rows.push({
+ id: Number(r.id) || 0,
+ source: "action_outcome",
+ eventType: "tx_submit",
+ walletPublicKey: r.walletPublicKey ?? null,
+ actionType: null,
+ summary: r.summary ?? null,
+ txHash,
+ explorerUrl: stellarExpertTxUrl(txHash),
+ metadata: null,
+ createdAt,
+ });
+ }
+
+ for (const raw of betaRes.rows ?? []) {
+ const r = raw as {
+ walletPublicKey?: string;
+ txHash?: string | null;
+ tokenId?: number | null;
+ createdAt?: Date | string;
+ };
+ const txHash =
+ typeof r.txHash === "string" && r.txHash.trim() ? r.txHash.trim() : null;
+ const createdAt =
+ r.createdAt instanceof Date
+ ? r.createdAt.toISOString()
+ : String(r.createdAt ?? "");
+ rows.push({
+ id: 0,
+ source: "beta_nft_claim",
+ eventType: "tx_submit",
+ walletPublicKey: r.walletPublicKey ?? null,
+ actionType: "nft_mint",
+ summary: "Orbit Beta Tester NFT claim",
+ txHash,
+ explorerUrl: stellarExpertTxUrl(txHash),
+ metadata: { tokenId: r.tokenId ?? null, betaNft: true },
+ createdAt,
+ });
+ }
+
+ rows.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+ return rows;
 }
 
 export async function getBetaNftClaimedCount(): Promise<number> {

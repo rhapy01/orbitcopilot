@@ -3,6 +3,7 @@ import {
  getProductStats,
  insertFeedback,
  listAllFeedback,
+ listAllPlatformTransactions,
  recordWalletEvent,
  resolveBetaNftStatus,
 } from "../lib/product-store";
@@ -236,6 +237,82 @@ router.get("/feedback/export", async (req, res): Promise<void> => {
  console.error("[feedback/export] GET failed:", err);
  res.status(503).json({
  error: err instanceof Error ? err.message : "Feedback export unavailable",
+ });
+ }
+});
+
+/**
+ * Full platform transaction export for testnet traction submissions.
+ * - GET /api/transactions/export → JSON
+ * - GET /api/transactions/export?format=csv → CSV download
+ * Dedupes by txHash when present (prefers action_outcome / richer rows).
+ */
+router.get("/transactions/export", async (req, res): Promise<void> => {
+ try {
+ const format =
+ typeof req.query.format === "string" ? req.query.format.trim().toLowerCase() : "json";
+ const all = await listAllPlatformTransactions();
+
+ // Prefer rows with hashes; collapse duplicate hashes keeping richest summary.
+ const byHash = new Map<string, (typeof all)[number]>();
+ const noHash: typeof all = [];
+ for (const row of all) {
+ if (!row.txHash) {
+ noHash.push(row);
+ continue;
+ }
+ const key = row.txHash.toLowerCase();
+ const prev = byHash.get(key);
+ if (!prev) {
+ byHash.set(key, row);
+ continue;
+ }
+ const score = (r: typeof row) =>
+ (r.summary ? 2 : 0) + (r.actionType ? 1 : 0) + (r.source === "action_outcome" ? 1 : 0);
+ if (score(row) > score(prev)) byHash.set(key, row);
+ }
+ const unique = [...byHash.values(), ...noHash].sort((a, b) =>
+ a.createdAt < b.createdAt ? 1 : -1
+ );
+
+ if (format === "csv") {
+ const esc = (v: string) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+ const lines = [
+ "id,source,event_type,action_type,wallet_public_key,tx_hash,explorer_url,summary,created_at",
+ ...unique.map((r) =>
+ [
+ r.id,
+ esc(r.source),
+ esc(r.eventType),
+ esc(r.actionType ?? ""),
+ esc(r.walletPublicKey ?? ""),
+ esc(r.txHash ?? ""),
+ esc(r.explorerUrl ?? ""),
+ esc(r.summary ?? ""),
+ esc(r.createdAt),
+ ].join(",")
+ ),
+ ];
+ res.setHeader(
+ "Content-Disposition",
+ 'attachment; filename="orbit-platform-transactions.csv"'
+ );
+ res.type("text/csv").send(lines.join("\n"));
+ return;
+ }
+
+ res.json({
+ network: "testnet",
+ totalRows: all.length,
+ uniqueWithHash: byHash.size,
+ unsignedOrNoHash: noHash.length,
+ exportedAt: new Date().toISOString(),
+ transactions: unique,
+ });
+ } catch (err) {
+ console.error("[transactions/export] GET failed:", err);
+ res.status(503).json({
+ error: err instanceof Error ? err.message : "Transaction export unavailable",
  });
  }
 });
