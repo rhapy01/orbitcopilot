@@ -24,7 +24,7 @@ export const ORBIT_CONTRACT_IDS = {
     "CC2IDBXQLA5L6NDWMGV3M6JH5NVK6NG26HMQCEYEHLJUJ7Q35KXADT3G",
   nft:
     import.meta.env.VITE_ORBIT_NFT_CONTRACT_ID?.trim() ||
-    "CDABPHCZSEMMW7V5AWCJMFXXNP4OVYPLSZIYHW436YLXSADQH2CR5MMS",
+    "CDFFITRDXWS7YASXWVMLUNE4LU4OJHMEN2Q2BXURORGDMF62JGBR2MCS",
   supply:
     import.meta.env.VITE_ORBIT_SUPPLY_CONTRACT_ID?.trim() ||
     "CAK6JTURV46VP2HSVFZORYJHBC4CYP4BDVJLQJK4AXSN6X75SIZRB6QV",
@@ -76,6 +76,16 @@ export const ORBIT_CONTRACT_METHODS = {
     "cancel_listing",
     "buy",
     "get_listing",
+    "floor_price",
+    "mint_config",
+    "mint_price_for",
+    "set_mint_prices",
+    "set_mint_stages",
+    "set_max_mint_per_wallet",
+    "set_allowlist_entry",
+    "remove_allowlist_entry",
+    "allowlist_entry",
+    "wallet_mint_count",
     "tokens_of",
     "total_supply",
     "max_supply",

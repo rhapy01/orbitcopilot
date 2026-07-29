@@ -208,6 +208,12 @@ import {
   prepareMeridianDeposit,
   prepareMeridianWithdraw,
 } from "../lib/meridian";
+import {
+  fetchCctpAttestation,
+  formatCctpHelp,
+  prepareCctpBridge,
+  resolveCctpDest,
+} from "../lib/cctp";
 
 const router: IRouter = Router();
 
@@ -293,17 +299,28 @@ function isConnectWalletIntent(content: string): boolean {
 
 const SUPPORTED_ASSETS = ["XLM", "USDC"];
 
-// DeFindex public vaults (testnet) — XLM + Blend USDC
-// "deposit 10 XLM into defindex" / "deposit 5 USDC into defindex" / "withdraw 2 xlm from defindex"
-const DEFINDEX_DEPOSIT_RE =
-  /\b(?:deposit|supply|stake)\s+([\d.]+)\s*(xlm|usdc|cetes)\b(?:.*?\b(?:into|to|on|in)\b.*?\bdefindex\b|\s+defindex\b)|\bdefindex\b.*?\b(?:deposit|supply)\s+([\d.]+)\s*(xlm|usdc|cetes)\b/i;
-const DEFINDEX_WITHDRAW_RE =
-  /\bwithdraw\s+([\d.]+)\s*(xlm|usdc|cetes)\b(?:.*?\b(?:from|on)\b.*?\bdefindex\b|\s+defindex\b)|\bdefindex\b.*?\bwithdraw\s+([\d.]+)\s*(xlm|usdc|cetes)\b/i;
+const DEFINDEX_NAME =
+  String.raw`(?:defindex|defiindex|defi[\s-]?index|de[\s-]?findex)`;
+// "deposit 10 XLM into defindex" / "deposit 5 USDC into defiindex" / "withdraw 2 xlm from defindex"
+const DEFINDEX_DEPOSIT_RE = new RegExp(
+  String.raw`\b(?:deposit|supply|stake)\s+([\d.]+)\s*(xlm|usdc|cetes)\b(?:.*?\b(?:into|to|on|in)\b.*?\b${DEFINDEX_NAME}\b|\s+${DEFINDEX_NAME}\b)|\b${DEFINDEX_NAME}\b.*?\b(?:deposit|supply)\s+([\d.]+)\s*(xlm|usdc|cetes)\b`,
+  "i"
+);
+const DEFINDEX_WITHDRAW_RE = new RegExp(
+  String.raw`\bwithdraw\s+([\d.]+)\s*(xlm|usdc|cetes)\b(?:.*?\b(?:from|on)\b.*?\b${DEFINDEX_NAME}\b|\s+${DEFINDEX_NAME}\b)|\b${DEFINDEX_NAME}\b.*?\bwithdraw\s+([\d.]+)\s*(xlm|usdc|cetes)\b`,
+  "i"
+);
 // Meridian USDC vault
 const MERIDIAN_DEPOSIT_RE =
   /\b(?:deposit|supply)\s+([\d.]+)\s*usdc\b(?:.*?\b(?:into|to|on|in)\b.*?\bmeridian\b|\s+meridian\b)|\bmeridian\b.*?\b(?:deposit|supply)\s+([\d.]+)\s*usdc\b/i;
 const MERIDIAN_WITHDRAW_RE =
   /\bwithdraw\s+([\d.]+)\s*(?:usdc|musdc|shares?)?\b(?:.*?\b(?:from|on)\b.*?\bmeridian\b|\s+meridian\b)|\bmeridian\b.*?\bwithdraw\s+([\d.]+)/i;
+
+// Circle CCTP: "bridge 1 USDC to base sepolia 0x…" / "cctp 2 usdc to ethereum 0x…"
+const CCTP_BRIDGE_RE =
+  /\b(?:bridge|cctp)\s+([\d.]+)\s*usdc\b(?:.*?\b(?:to|onto|on)\b\s*)?(?:(base|ethereum|eth|arbitrum|arb|optimism|op)(?:\s+sepolia)?)?\s*(0x[a-fA-F0-9]{40})\b/i;
+const CCTP_ATTEST_RE =
+  /\b(?:cctp\s+)?attest(?:ation)?\b.*?\b([a-f0-9]{64})\b/i;
 
 type ChatReply = {
  text: string;
@@ -431,6 +448,7 @@ interface ChatAction {
     | "defindex_withdraw"
     | "meridian_deposit"
     | "meridian_withdraw"
+    | "cctp_bridge"
     | "aquarius_swap"
  | "connect_wallet"
  | "add_trustline";
@@ -2675,7 +2693,7 @@ async function getDeterministicResponse(
 
 // DeFindex — deposit / withdraw into the public testnet XLM vault
 {
-  if (/\bdefindex\b/i.test(content) && !DEFINDEX_DEPOSIT_RE.test(content) && !DEFINDEX_WITHDRAW_RE.test(content)) {
+  if (/\b(?:defindex|defiindex|defi[\s-]?index)\b/i.test(content) && !DEFINDEX_DEPOSIT_RE.test(content) && !DEFINDEX_WITHDRAW_RE.test(content)) {
     try {
       return { text: await formatDefindexStatus(), action: null };
     } catch (err: any) {
@@ -2740,6 +2758,55 @@ async function getDeterministicResponse(
       };
     } catch (err: any) {
       return { text: err?.message ?? "Could not prepare DeFindex withdraw", action: null };
+    }
+  }
+}
+
+// Circle CCTP — bridge USDC Stellar → EVM testnets
+{
+  if (/\b(?:cctp|circle\s+cctp)\b/i.test(content) && !CCTP_BRIDGE_RE.test(content) && !CCTP_ATTEST_RE.test(content)) {
+    return { text: formatCctpHelp(), action: null };
+  }
+
+  const cctpAttest = content.match(CCTP_ATTEST_RE);
+  if (cctpAttest) {
+    try {
+      const result = await fetchCctpAttestation({ stellarTxHash: cctpAttest[1]! });
+      return { text: result.text, action: null };
+    } catch (err: any) {
+      return { text: err?.message ?? "Attestation lookup failed", action: null };
+    }
+  }
+
+  const cctpBridge = content.match(CCTP_BRIDGE_RE);
+  if (cctpBridge) {
+    if (!publicKey) return { text: AI_RESPONSES.connectWallet, action: null };
+    const amount = cctpBridge[1]!;
+    const destChain = resolveCctpDest(cctpBridge[2] || "base");
+    const destination = cctpBridge[3]!;
+    try {
+      const prepared = await prepareCctpBridge({
+        walletAddress: publicKey,
+        amount,
+        destinationEvm: destination,
+        destChain,
+      });
+      return {
+        text: prepared.message,
+        action: {
+          type: "cctp_bridge",
+          sendAmount: prepared.sendAmount,
+          sendAsset: prepared.sendAsset,
+          destAsset: prepared.destAsset,
+          destination: prepared.destination,
+          marketHint: prepared.marketHint,
+          poolContract: prepared.poolContract,
+          xdr: prepared.xdr,
+          networkPassphrase: prepared.networkPassphrase,
+        } as ChatAction,
+      };
+    } catch (err: any) {
+      return { text: err?.message ?? "Could not prepare CCTP bridge", action: null };
     }
   }
 }

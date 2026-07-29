@@ -24,7 +24,7 @@ import {
 import { eq, and, gt } from "drizzle-orm";
 import { scryptSync } from "node:crypto";
 import { generateOtp, encrypt, decrypt, deriveUserKey, assertWalletCryptoReady } from "../lib/crypto";
-import { sendEmail, otpEmailHtml } from "../lib/email";
+import { sendEmail, otpEmailHtml, otpEmailText, welcomeEmailHtml, welcomeEmailText } from "../lib/email";
 import { createSession, revokeSession, COOKIE_NAME, SESSION_TTL_MS } from "../lib/session";
 import {
  createInternalWallet,
@@ -142,8 +142,8 @@ async function issueOtp(email: string, purpose: string, emailPurposeLabel: strin
 
  await sendEmail({
  to: email,
- subject: "Your Orbit verification code",
- text: `Your code is: ${code}\n\nExpires in 10 minutes.`,
+ subject: "Your Orbit Copilot verification code",
+ text: otpEmailText(code, emailPurposeLabel),
  html: otpEmailHtml(code, emailPurposeLabel),
  });
 
@@ -523,6 +523,11 @@ router.post(
  return;
  }
 
+ const existing = await db.query.usersTable.findFirst({
+ where: eq(usersTable.id, req.userId),
+ });
+ const firstVerification = !existing?.emailVerifiedAt;
+
  await db
  .update(usersTable)
  .set({
@@ -531,6 +536,20 @@ router.post(
  updatedAt: new Date(),
  })
  .where(eq(usersTable.id, req.userId));
+
+ if (firstVerification) {
+ try {
+ await sendEmail({
+ to: normalizedEmail,
+ subject: "Welcome to Orbit Copilot",
+ text: welcomeEmailText({ email: normalizedEmail }),
+ html: welcomeEmailHtml({ email: normalizedEmail }),
+ });
+ } catch (err) {
+ // Verification already succeeded — don't fail the request if welcome mail bounces
+ logger.error({ err, email: normalizedEmail }, "Failed to send welcome email");
+ }
+ }
 
  const sec = await securityPayload(req.userId);
  res.json({ ok: true, ...sec });

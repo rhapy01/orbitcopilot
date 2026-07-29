@@ -16,13 +16,47 @@ export const NFT_TRANSFER_RE =
 export const NFT_CANCEL_RE =
  /\bcancel\s+(?:listing\s+(?:for\s+)?)?nft\s+#?(\d+)\b|\bunlist\s+nft\s+#?(\d+)\b/i;
 export const NFT_CREATE_COLLECTION_RE =
- /\bcreate\s+(?:an?\s+)?(?:nft\s+)?collection\b(?:\s+(?:called|named)?\s*["']?([^"'\n]+?)["']?(?=\s*(?:,|\s)+(?:symbol|max|total|supply|ts|royalty|description|image|website|banner)\b|\s*$))?(?:\s+symbol\s+([A-Za-z0-9]{1,12}))?(?:\s+max(?:\s+supply)?\s+(\d+))?/i;
+ /\b(?:let['']?s\s+)?create\s+(?:an?\s+)?(?:nft\s+)?collection\b(?:\s+(?:called|named)?\s*["']?([^"'\n]+?)["']?(?=\s*(?:,|\s)+(?:symbol|max|total|supply|ts|royalty|description|image|website|banner)\b|\s*$))?(?:\s+symbol\s+([A-Za-z0-9]{1,12}))?(?:\s+max(?:\s+supply)?\s+(\d+))?/i;
+
+/** View NFT holdings — must not steal create/list/buy/transfer intents. */
+export function isNftGalleryIntent(content: string): boolean {
+ if (NFT_CREATE_COLLECTION_RE.test(content)) return false;
+ if (NFT_MEDIA_PACK_RE.test(content)) return false;
+ if (NFT_MINT_NEXT_RE.test(content)) return false;
+ if (NFT_LIST_RE.test(content)) return false;
+ if (NFT_BUY_RE.test(content)) return false;
+ if (NFT_TRANSFER_RE.test(content)) return false;
+ if (NFT_CANCEL_RE.test(content)) return false;
+ if (/\b(?:create|deploy|start|launch|make|build|set\s+up)\b/i.test(content) && /\bcollection\b/i.test(content)) {
+  return false;
+ }
+ if (/\bmint\b/i.test(content) || /\bclaim\b/i.test(content)) return false;
+ return (
+  /\b(?:view|show|see|list)\b[\s\w]{0,24}\b(?:my\s+)?nfts?\b/i.test(content) ||
+  /\bmy\s+nfts?\b/i.test(content) ||
+  /\b(?:nft|nfts|collectibles?)\b[\s\w]{0,24}\b(?:holdings?|collection)\b/i.test(content) ||
+  /\b(?:holdings?|collection)\b[\s\w]{0,24}\b(?:nft|nfts)\b/i.test(content)
+ );
+}
 /** Upload ZIP / media pack for unique drop assets. */
 export const NFT_MEDIA_PACK_RE =
  /\b(?:upload|add)\s+(?:(?:a|an|my)\s+)?(?:nft\s+)?(?:media\s+)?pack\b|\bupload\s+(?:\d+\s+)?(?:unique\s+)?(?:images?|assets?|media)\b|\bmedia\s+pack\b/i;
 /** Mint next unique NFT from a ready media pack. */
 export const NFT_MINT_NEXT_RE =
  /\bmint\s+next(?:\s+(?:an?\s+)?nft)?\b|\bmint\s+(?:from\s+)?(?:my\s+)?(?:media\s+)?pack\b|\bmint\s+next\s+from\s+(?:my\s+)?collection\b/i;
+
+export const NFT_SET_MINT_PRICE_RE =
+ /\bset\s+(?:(?:public|allowlist|presale)\s+)?mint(?:ing)?\s+price\s+(?:to\s+)?([\d.]+)\s*(?:xlm)?\b/i;
+export const NFT_OPEN_PUBLIC_MINT_RE =
+ /\bopen\s+public\s+mint\b|\bstart\s+public\s+(?:sale|mint)\b/i;
+export const NFT_OPEN_ALLOWLIST_MINT_RE =
+ /\bopen\s+(?:allowlist|presale|private)\s+mint\b|\bstart\s+(?:allowlist|presale)\b/i;
+export const NFT_ALLOWLIST_ADD_RE =
+ /\b(?:add|allowlist)\s+(G[A-Z2-7]{55})(?:\s+(?:for\s+)?(\d+)\s+mints?)?(?:\s+(?:at|for)\s+([\d.]+)\s*xlm)?\b/i;
+export const NFT_MINT_STATUS_RE =
+ /\b(?:mint|drop)\s+status\b|\b(?:show|view)\s+(?:my\s+)?(?:collection\s+)?mint(?:ing)?\s+(?:price|config|stages?)\b/i;
+export const NFT_COLLECTION_CONTRACT_RE =
+ /\b(?:on|for|collection)\s+(C[A-Z0-9]{55})\b/i;
 export const NFT_CLAIM_BETA_RE =
  /\bclaim\s+(?:my\s+)?(?:orbit\s+)?beta\s+(?:tester\s+)?nft\b|\bclaim\s+(?:my\s+)?feedback\s+nft\b|\bi\s+have\s+submitted\s+my\s+feedback[,\s]+mint\s+my\s+beta\s+tester\s+nft\b|\bmint\s+my\s+beta\s+tester\s+nft\b/i;
 /** Launch fungible token (classic + SAC). Avoid colliding with "mint NFT". */
@@ -56,6 +90,11 @@ export type IntentKind =
  | "nft_create_collection"
  | "nft_media_pack"
  | "nft_mint_next"
+ | "nft_set_mint_price"
+ | "nft_open_public_mint"
+ | "nft_open_allowlist_mint"
+ | "nft_allowlist_add"
+ | "nft_mint_status"
  | "nft_claim_beta"
  | "token_launch"
  | "token_mint_supply"
@@ -72,6 +111,11 @@ export function classifyGreenbeltIntent(content: string): IntentKind {
  if (ORBIT_SUPPLY_DEPOSIT_RE.test(content)) return "orbit_supply_deposit";
  if (ORBIT_SUPPLY_WITHDRAW_RE.test(content)) return "orbit_supply_withdraw";
  if (NFT_CREATE_COLLECTION_RE.test(content)) return "nft_create_collection";
+ if (NFT_SET_MINT_PRICE_RE.test(content)) return "nft_set_mint_price";
+ if (NFT_OPEN_PUBLIC_MINT_RE.test(content)) return "nft_open_public_mint";
+ if (NFT_OPEN_ALLOWLIST_MINT_RE.test(content)) return "nft_open_allowlist_mint";
+ if (NFT_ALLOWLIST_ADD_RE.test(content)) return "nft_allowlist_add";
+ if (NFT_MINT_STATUS_RE.test(content)) return "nft_mint_status";
  if (NFT_MEDIA_PACK_RE.test(content)) return "nft_media_pack";
  if (NFT_MINT_NEXT_RE.test(content)) return "nft_mint_next";
  if (TOKEN_LAUNCH_RE.test(content)) return "token_launch";

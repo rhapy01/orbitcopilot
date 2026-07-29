@@ -130,7 +130,7 @@ export const KNOWLEDGE_CORPUS: KnowledgeChunk[] = [
  title: "Bridges and cross-chain transfers",
  tags: ["bridge", "cross-chain", "wormhole", "wrapped", "risk"],
  source: "Orbit Knowledge Base",
- body: `Bridges move value between chains (lock-and-mint, burn-and-release, or liquidity networks). They unlock multi-chain DeFi but concentrate risk: bridge hacks have caused some of the largest crypto losses. Wrapped assets (wETH, wBTC) depend on custody/bridge integrity. Orbit Copilot does not execute bridges today - it can explain them, while execution stays on Stellar testnet protocols.`,
+ body: `Bridges move value between chains (lock-and-mint, burn-and-release, or liquidity networks). They unlock multi-chain DeFi but concentrate risk: bridge hacks have caused some of the largest crypto losses. Wrapped assets (wETH, wBTC) depend on custody/bridge integrity. Orbit Copilot executes **Circle CCTP** for native USDC on Stellar Testnet → Base/Ethereum/Arbitrum/OP Sepolia (chat: bridge N USDC to base sepolia 0x…). Other bridge designs can still be explained while execution stays on supported testnet flows.`,
  },
  {
  id: "governance",

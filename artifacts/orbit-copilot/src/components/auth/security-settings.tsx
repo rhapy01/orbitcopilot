@@ -247,6 +247,10 @@ export function SecuritySettings({ open, onOpenChange }: SecuritySettingsProps) 
  />
  </div>
  {emailSent && (
+ <>
+ <p className="text-xs text-amber-400/90 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 leading-relaxed">
+ Can’t find the code? Check your <strong>Spam</strong> or <strong>Promotions</strong> folder and mark it as Not spam.
+ </p>
  <Input
  placeholder="6-digit code"
  maxLength={6}
@@ -254,6 +258,7 @@ export function SecuritySettings({ open, onOpenChange }: SecuritySettingsProps) 
  onChange={(e) => setEmailOtp(e.target.value.replace(/\D/g, ""))}
  className="bg-[#1a1d2e] border-[#2a2d3e] text-white text-center tracking-widest"
  />
+ </>
  )}
  {error && <div className="flex items-center gap-2 text-red-400 text-sm"><AlertCircle className="w-4 h-4" />{error}</div>}
  {success && <div className="flex items-center gap-2 text-green-400 text-sm"><Check className="w-4 h-4" />{success}</div>}

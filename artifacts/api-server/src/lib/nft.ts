@@ -55,6 +55,11 @@ export type CollectionPromptFields = {
   website?: string;
   /** True when chat included an explicit max/supply number. */
   supplySpecified: boolean;
+  /** True when the user named the collection (not a bare "create collection" ask). */
+  nameSpecified: boolean;
+  publicMintPriceXlm?: string;
+  allowlistMintPriceXlm?: string;
+  maxMintPerWallet?: number;
 };
 
 export function parseCollectionPromptFields(
@@ -62,12 +67,17 @@ export function parseCollectionPromptFields(
   match: RegExpMatchArray
 ): CollectionPromptFields {
   let name = (match[1]?.trim() || "").replace(/,\s*$/, "").trim();
+  let nameSpecified = Boolean(name);
   if (!name) {
     // Fallback: words after "collection" until a keyword / comma clause
     const after = content.match(
       /\bcollection\b\s+(?:called|named\s+)?["']?(.+?)(?=\s*(?:,|\s)+(?:symbol|max|total|supply|ts|royalty|description|image|website|banner)\b|\s*$)/i
     );
-    name = after?.[1]?.trim().replace(/,\s*$/, "") || "Orbit Collection";
+    const afterName = after?.[1]?.trim().replace(/,\s*$/, "");
+    if (afterName) {
+      name = afterName;
+      nameSpecified = true;
+    }
   }
   name = name
     .replace(
@@ -76,7 +86,7 @@ export function parseCollectionPromptFields(
     )
     .replace(/,\s*$/, "")
     .trim()
-    .slice(0, 64) || "Orbit Collection";
+    .slice(0, 64);
 
   const symbolFromMatch = match[2]?.trim();
   const symbol =
@@ -109,6 +119,9 @@ export function parseCollectionPromptFields(
   const image = content.match(/\bimage\s+(https?:\/\/\S+)/i)?.[1]?.trim();
   const website = content.match(/\bwebsite\s+(https?:\/\/\S+)/i)?.[1]?.trim();
   const royaltyBps = parseRoyaltyBpsFromText(content) ?? NFT_DEFAULT_ROYALTY_BPS;
+  const publicMintPriceXlm = parseMintPriceXlmFromText(content);
+  const allowlistMintPriceXlm = parseAllowlistMintPriceXlmFromText(content);
+  const maxMintPerWallet = parseMaxMintPerWalletFromText(content);
 
   return {
     name,
@@ -119,6 +132,10 @@ export function parseCollectionPromptFields(
     image,
     website,
     supplySpecified,
+    nameSpecified: nameSpecified && name.length >= 2,
+    publicMintPriceXlm,
+    allowlistMintPriceXlm,
+    maxMintPerWallet,
   };
 }
 
@@ -149,7 +166,6 @@ export function formatCreateCollectionDraftMessage(fields: CollectionPromptField
     description: fields.description,
     image: fields.image,
     supplySpecified: fields.supplySpecified,
-    maxSupply: fields.maxSupply,
   });
   const lines = [
     `Set up SEP-50 collection "${fields.name}" (${fields.symbol}).`,
@@ -179,10 +195,135 @@ function toStroops(human: string): string {
  return BigInt((w || "0") + frac).toString();
 }
 
+function fromStroops(stroops: bigint | number | string): string {
+ const n = BigInt(stroops);
+ const whole = n / 10_000_000n;
+ const frac = n % 10_000_000n;
+ if (frac === 0n) return whole.toString();
+ return `${whole}.${frac.toString().padStart(7, "0").replace(/0+$/, "")}`;
+}
+
+/** Parse "mint price 5 XLM" / "public mint 10" from chat. */
+export function parseMintPriceXlmFromText(content: string): string | undefined {
+ const m = content.match(
+   /\b(?:public\s+)?(?:mint(?:ing)?\s+)?price\s*(?:is|=|:)?\s*([\d.]+)\s*(?:xlm)?\b/i
+ ) ?? content.match(/\bmint\s+(?:for\s+)?([\d.]+)\s*xlm\b/i);
+ if (!m?.[1]) return undefined;
+ const n = parseFloat(m[1]);
+ return Number.isFinite(n) && n >= 0 ? String(n) : undefined;
+}
+
+export function parseAllowlistMintPriceXlmFromText(content: string): string | undefined {
+ const m = content.match(
+   /\b(?:allowlist|presale|private)\s+(?:mint(?:ing)?\s+)?price\s*(?:is|=|:)?\s*([\d.]+)\s*(?:xlm)?\b/i
+ );
+ if (!m?.[1]) return undefined;
+ const n = parseFloat(m[1]);
+ return Number.isFinite(n) && n >= 0 ? String(n) : undefined;
+}
+
+export function parseMaxMintPerWalletFromText(content: string): number | undefined {
+ const m = content.match(
+   /\b(?:max\s+)?(?:mint(?:s)?\s+per\s+wallet|per\s+wallet)\s*(?:is|=|:)?\s*(\d+)\b/i
+ );
+ if (!m?.[1]) return undefined;
+ const n = parseInt(m[1], 10);
+ return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
+export type CollectionMintConfigView = {
+  publicMintPriceXlm: string;
+  allowlistMintPriceXlm: string;
+  maxMintPerWallet: number;
+  allowlistActive: boolean;
+  publicMintActive: boolean;
+  openMint: boolean;
+  floorPriceXlm: string | null;
+};
+
+export async function getCollectionMintInfo(
+  collectionContract: string,
+  walletAddress?: string
+): Promise<CollectionMintConfigView> {
+  const { Address, nativeToScVal } = await import("@stellar/stellar-sdk");
+  const cfg = await simulateContractCall(collectionContract, "mint_config", []);
+  const floor = await simulateContractCall(collectionContract, "floor_price", []);
+  let mintPriceFor = 0n;
+  if (walletAddress) {
+    const p = await simulateContractCall(collectionContract, "mint_price_for", [
+      Address.fromString(walletAddress).toScVal(),
+    ]);
+    mintPriceFor = BigInt(String(p ?? 0));
+  }
+  const publicPrice = BigInt(String(cfg?.public_mint_price ?? cfg?.publicMintPrice ?? 0));
+  const allowPrice = BigInt(String(cfg?.allowlist_mint_price ?? cfg?.allowlistMintPrice ?? 0));
+  return {
+    publicMintPriceXlm: fromStroops(publicPrice),
+    allowlistMintPriceXlm: fromStroops(allowPrice),
+    maxMintPerWallet: Number(cfg?.max_mint_per_wallet ?? cfg?.maxMintPerWallet ?? 0),
+    allowlistActive: Boolean(cfg?.allowlist_active ?? cfg?.allowlistActive),
+    publicMintActive: Boolean(cfg?.public_mint_active ?? cfg?.publicMintActive),
+    openMint: Boolean(cfg?.open_mint ?? cfg?.openMint),
+    floorPriceXlm: floor && BigInt(String(floor)) > 0n ? fromStroops(floor) : null,
+    ...(walletAddress
+      ? { walletMintPriceXlm: fromStroops(mintPriceFor) }
+      : {}),
+  } as CollectionMintConfigView & { walletMintPriceXlm?: string };
+}
+
+async function simulateContractCall(
+  contractId: string,
+  method: string,
+  args: any[]
+): Promise<any> {
+  const { Contract, TransactionBuilder, Networks, BASE_FEE, scValToNative } =
+    await import("@stellar/stellar-sdk");
+  const { Server } = await import("@stellar/stellar-sdk/rpc");
+  const { getDemoKeypair } = await import("./stellar");
+  const rpc = new Server(SOROBAN_RPC);
+  const demo = await getDemoKeypair();
+  const account = await rpc.getAccount(demo.publicKey());
+  const contract = new Contract(contractId);
+  const tx = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: Networks.TESTNET,
+  })
+    .addOperation(contract.call(method, ...args))
+    .setTimeout(30)
+    .build();
+  const sim = await rpc.simulateTransaction(tx);
+  const retval = (sim as any)?.result?.retval;
+  if (!retval) return null;
+  return scValToNative(retval);
+}
+
 function resolveCollectionId(collectionContract?: string): string {
  const id = collectionContract?.trim();
  if (id?.startsWith("C")) return id;
  return requireNftContract();
+}
+
+/** Creator's latest factory collection, or default / hinted contract. */
+export async function resolveCreatorCollection(
+  wallet: string,
+  hint?: string
+): Promise<string> {
+  if (hint?.trim().startsWith("C")) return hint.trim();
+  if (nftFactoryConfigured()) {
+    try {
+      const factory = requireNftFactoryContract();
+      const { Address } = await import("@stellar/stellar-sdk");
+      const list = await simulateContractCall(factory, "collections_of", [
+        Address.fromString(wallet).toScVal(),
+      ]);
+      if (Array.isArray(list) && list.length > 0) {
+        return String(list[list.length - 1]);
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+  return resolveCollectionId();
 }
 
 /** Build salt bytes for factory deploy from creator + name + symbol. */
@@ -195,6 +336,23 @@ async function collectionSalt(
  return createHash("sha256")
  .update(`${creator}:${name}:${symbol}:${Date.now()}`)
  .digest();
+}
+
+export function collectionMintFieldsFromPrompt(fields: {
+  publicMintPriceXlm?: string;
+  allowlistMintPriceXlm?: string;
+  maxMintPerWallet?: number;
+}) {
+  const presaleOnly = Boolean(fields.allowlistMintPriceXlm && !fields.publicMintPriceXlm);
+  const publicPrice = fields.publicMintPriceXlm ?? "0";
+  const allowPrice = fields.allowlistMintPriceXlm ?? publicPrice;
+  return {
+    publicMintPriceXlm: publicPrice,
+    allowlistMintPriceXlm: allowPrice,
+    maxMintPerWallet: fields.maxMintPerWallet ?? 0,
+    allowlistActive: presaleOnly,
+    publicMintActive: !presaleOnly,
+  };
 }
 
 export async function prepareCreateCollection(input: {
@@ -210,6 +368,15 @@ export async function prepareCreateCollection(input: {
  externalUrl?: string;
  maxSupply?: number;
  openMint?: boolean;
+ /** Public mint price in XLM (0 = free). */
+ publicMintPriceXlm?: string;
+ /** Allowlist / presale mint price in XLM. */
+ allowlistMintPriceXlm?: string;
+ maxMintPerWallet?: number;
+ /** Start with allowlist stage active (public stage off). */
+ allowlistActive?: boolean;
+ /** Start with public mint stage active. Default true when openMint. */
+ publicMintActive?: boolean;
  /** Creator royalty in basis points (100 = 1%). Default 250 = 2.5%. */
  royaltyBps?: number;
  /** Optional media pack — max supply defaults to pack size when set. */
@@ -288,8 +455,38 @@ export async function prepareCreateCollection(input: {
  )
  );
  const openMint = input.openMint !== false;
+ const publicMintPriceXlm = input.publicMintPriceXlm?.trim() || "0";
+ const allowlistMintPriceXlm = input.allowlistMintPriceXlm?.trim() || publicMintPriceXlm;
+ const maxMintPerWallet = Math.max(0, Math.floor(input.maxMintPerWallet ?? 0));
+ const allowlistActive = input.allowlistActive === true;
+ const publicMintActive =
+   input.publicMintActive !== undefined ? input.publicMintActive : openMint && !allowlistActive;
+ const publicMintStroops = BigInt(toStroops(publicMintPriceXlm));
+ const allowlistMintStroops = BigInt(toStroops(allowlistMintPriceXlm));
  const salt = await collectionSalt(input.walletAddress, name, symbol);
  const saltScVal = xdr.ScVal.scvBytes(salt);
+ const mintConfigScVal = xdr.ScVal.scvMap([
+  new xdr.ScMapEntry({
+   key: xdr.ScVal.scvSymbol("public_mint_price"),
+   val: nativeToScVal(publicMintStroops, { type: "i128" }),
+  }),
+  new xdr.ScMapEntry({
+   key: xdr.ScVal.scvSymbol("allowlist_mint_price"),
+   val: nativeToScVal(allowlistMintStroops, { type: "i128" }),
+  }),
+  new xdr.ScMapEntry({
+   key: xdr.ScVal.scvSymbol("max_mint_per_wallet"),
+   val: nativeToScVal(maxMintPerWallet, { type: "u32" }),
+  }),
+  new xdr.ScMapEntry({
+   key: xdr.ScVal.scvSymbol("allowlist_active"),
+   val: xdr.ScVal.scvBool(allowlistActive),
+  }),
+  new xdr.ScMapEntry({
+   key: xdr.ScVal.scvSymbol("public_mint_active"),
+   val: xdr.ScVal.scvBool(publicMintActive),
+  }),
+ ]);
 
  const built = await buildContractInvoke({
  sourcePublicKey: input.walletAddress,
@@ -304,6 +501,7 @@ export async function prepareCreateCollection(input: {
  nativeToScVal(maxSupply, { type: "u32" }),
  xdr.ScVal.scvBool(openMint),
  nativeToScVal(royaltyBps, { type: "u32" }),
+ mintConfigScVal,
  ],
  });
 
@@ -315,13 +513,25 @@ export async function prepareCreateCollection(input: {
  openMint,
  royaltyBps,
  platformFeeBps: NFT_PLATFORM_FEE_BPS,
+ publicMintPriceXlm,
+ allowlistMintPriceXlm,
+ maxMintPerWallet,
+ allowlistActive,
+ publicMintActive,
  mediaPackId: input.mediaPackId?.trim() || undefined,
  factoryId,
  xdr: built.xdr,
  networkPassphrase: built.networkPassphrase,
- message: `Create SEP-50 NFT collection "${name}" (${symbol})${
- maxSupply ? ` max ${maxSupply}` : ""
- }${packItemCount ? ` with ${packItemCount}-asset media pack` : ""}. Secondary sales: ${(royaltyBps / 100).toFixed(2)}% creator royalty + ${(NFT_PLATFORM_FEE_BPS / 100).toFixed(2)}% Orbit fee. Sign to deploy.`,
+ message: [
+  `Create SEP-50 NFT collection "${name}" (${symbol})${maxSupply ? ` max ${maxSupply}` : ""}${packItemCount ? ` with ${packItemCount}-asset media pack` : ""}.`,
+  allowlistActive
+    ? `Allowlist mint: ${allowlistMintPriceXlm} XLM${maxMintPerWallet ? ` · max ${maxMintPerWallet}/wallet` : ""}.`
+    : publicMintActive
+      ? `Public mint: ${publicMintPriceXlm === "0" ? "free" : `${publicMintPriceXlm} XLM`}${maxMintPerWallet ? ` · max ${maxMintPerWallet}/wallet` : ""}.`
+      : "Minting: admin-only until you open a stage.",
+  `Secondary sales: ${(royaltyBps / 100).toFixed(2)}% creator royalty + ${(NFT_PLATFORM_FEE_BPS / 100).toFixed(2)}% Orbit fee.`,
+  "Sign to deploy.",
+ ].join(" "),
  };
 }
 
@@ -398,9 +608,18 @@ export async function prepareNftMint(input: {
  }
  }
 
- // Auto-build SEP-50 / OpenSea metadata when chat doesn't pass a URI.
- if (!uri) {
- let image = input.image?.trim();
+ // Auto-build SEP-50 / OpenSea metadata when chat doesn't pass a URI,
+ // OR when the user attached new media after a stale empty-image metadataUri.
+ const hasFreshMedia = Boolean(
+  input.imageDataUrl ||
+  input.animationDataUrl ||
+  input.image?.trim() ||
+  input.animationUrl?.trim()
+ );
+ let resolvedImageUrl: string | undefined = packInfo?.imageUrl;
+ let resolvedAnimationUrl: string | undefined;
+ if (!uri || hasFreshMedia) {
+ let image = input.image?.trim() || undefined;
  if (input.imageDataUrl) {
  const uploaded = await storeNftMedia({
  walletPublicKey: input.walletAddress,
@@ -408,7 +627,7 @@ export async function prepareNftMint(input: {
  });
  image = uploaded.url;
  }
- let animationUrl = input.animationUrl?.trim();
+ let animationUrl = input.animationUrl?.trim() || undefined;
  if (input.animationDataUrl) {
  const uploaded = await storeNftMedia({
  walletPublicKey: input.walletAddress,
@@ -416,13 +635,15 @@ export async function prepareNftMint(input: {
  });
  animationUrl = uploaded.url;
  }
+ // Rebuild whenever fresh media is present — never keep a prior empty-image URI.
+ if (hasFreshMedia || !uri) {
  const meta: Sep50Metadata = {
  name,
  description:
  input.description?.trim() ||
  `${name} — minted via Orbit Copilot chat on Stellar Testnet (SEP-50).`,
- image,
- animation_url: animationUrl,
+ image: image || undefined,
+ animation_url: animationUrl || undefined,
  attributes: [
  ...(parseTraits(input.traits) ?? []),
  { trait_type: "Platform", value: "Orbit Copilot" },
@@ -435,6 +656,9 @@ export async function prepareNftMint(input: {
  metadata: meta,
  });
  uri = stored.uri.slice(0, 200);
+ resolvedImageUrl = meta.image || resolvedImageUrl;
+ resolvedAnimationUrl = meta.animation_url;
+ }
  }
 
  const built = await buildContractInvoke({
@@ -448,6 +672,32 @@ export async function prepareNftMint(input: {
  ],
  });
 
+ let mintPriceLine = "";
+ try {
+ const info = await getCollectionMintInfo(contractId, input.walletAddress);
+ const price =
+   (info as CollectionMintConfigView & { walletMintPriceXlm?: string }).walletMintPriceXlm ??
+   (info.publicMintActive ? info.publicMintPriceXlm : info.allowlistMintPriceXlm);
+ if (price && price !== "0") {
+ mintPriceLine = ` Mint cost: **${price} XLM** (+ ${(NFT_PLATFORM_FEE_BPS / 100).toFixed(2)}% Orbit fee on primary).`;
+ } else if (!info.publicMintActive && !info.allowlistActive) {
+ throw new Error(
+ "Public mint is not open for this collection. The creator must enable allowlist or public mint stage."
+ );
+ } else if (info.allowlistActive && !info.publicMintActive) {
+ throw new Error(
+ "Allowlist mint is active — your wallet must be on the collection allowlist."
+ );
+ }
+ if (info.floorPriceXlm) {
+ mintPriceLine += ` Secondary floor: ${info.floorPriceXlm} XLM.`;
+ }
+ } catch (err: any) {
+ if (err?.message?.includes("not open") || err?.message?.includes("allowlist")) {
+ throw err;
+ }
+ }
+
  return {
  type: "nft_mint" as const,
  name,
@@ -455,12 +705,13 @@ export async function prepareNftMint(input: {
  collectionContract: contractId,
  mediaPackId: packInfo?.packId,
  tokenId: packInfo?.tokenIndex,
- imageUrl: packInfo?.imageUrl,
+ imageUrl: resolvedImageUrl,
+ animationUrl: resolvedAnimationUrl,
  xdr: built.xdr,
  networkPassphrase: built.networkPassphrase,
  message: packInfo
- ? `Mint ${name} (${packInfo.tokenIndex}/${packInfo.itemCount} from media pack). Sign to confirm.`
- : `Mint NFT "${name}" (SEP-50 metadata ready). Sign to confirm.`,
+ ? `Mint ${name} (${packInfo.tokenIndex}/${packInfo.itemCount} from media pack).${mintPriceLine} Sign to confirm.`
+ : `Mint NFT "${name}" (SEP-50 metadata ready).${mintPriceLine} Sign to confirm.`,
  };
 }
 
@@ -581,22 +832,183 @@ export async function prepareNftTransfer(input: {
  };
 }
 
+export async function prepareSetMintStages(input: {
+  walletAddress: string;
+  collectionContract: string;
+  allowlistActive: boolean;
+  publicMintActive: boolean;
+}) {
+  const contractId = resolveCollectionId(input.collectionContract);
+  const { Address, nativeToScVal, xdr } = await import("@stellar/stellar-sdk");
+  const built = await buildContractInvoke({
+    sourcePublicKey: input.walletAddress,
+    contractId,
+    method: "set_mint_stages",
+    args: [
+      Address.fromString(input.walletAddress).toScVal(),
+      xdr.ScVal.scvBool(input.allowlistActive),
+      xdr.ScVal.scvBool(input.publicMintActive),
+    ],
+  });
+  const stage =
+    input.allowlistActive && !input.publicMintActive
+      ? "allowlist / presale"
+      : input.publicMintActive && !input.allowlistActive
+        ? "public"
+        : input.allowlistActive && input.publicMintActive
+          ? "allowlist + public"
+          : "closed (admin-only mint)";
+  return {
+    type: "nft_set_mint_stages" as const,
+    collectionContract: contractId,
+    xdr: built.xdr,
+    networkPassphrase: built.networkPassphrase,
+    message: `Set mint stage to **${stage}**. Sign to update the collection.`,
+  };
+}
+
+export async function prepareSetMintPrices(input: {
+  walletAddress: string;
+  collectionContract: string;
+  publicMintPriceXlm: string;
+  allowlistMintPriceXlm: string;
+  maxMintPerWallet?: number;
+}) {
+  const contractId = resolveCollectionId(input.collectionContract);
+  const { Address, nativeToScVal } = await import("@stellar/stellar-sdk");
+  const built = await buildContractInvoke({
+    sourcePublicKey: input.walletAddress,
+    contractId,
+    method: "set_mint_prices",
+    args: [
+      Address.fromString(input.walletAddress).toScVal(),
+      nativeToScVal(BigInt(toStroops(input.publicMintPriceXlm)), { type: "i128" }),
+      nativeToScVal(BigInt(toStroops(input.allowlistMintPriceXlm)), { type: "i128" }),
+    ],
+  });
+  const ops: Promise<unknown>[] = [Promise.resolve(built)];
+  if (input.maxMintPerWallet != null && input.maxMintPerWallet >= 0) {
+    ops.push(
+      buildContractInvoke({
+        sourcePublicKey: input.walletAddress,
+        contractId,
+        method: "set_max_mint_per_wallet",
+        args: [
+          Address.fromString(input.walletAddress).toScVal(),
+          nativeToScVal(input.maxMintPerWallet, { type: "u32" }),
+        ],
+      })
+    );
+  }
+  const [priceBuilt] = await Promise.all(ops);
+  return {
+    type: "nft_set_mint_prices" as const,
+    collectionContract: contractId,
+    publicMintPriceXlm: input.publicMintPriceXlm,
+    allowlistMintPriceXlm: input.allowlistMintPriceXlm,
+    maxMintPerWallet: input.maxMintPerWallet,
+    xdr: (priceBuilt as { xdr: string }).xdr,
+    networkPassphrase: (priceBuilt as { networkPassphrase: string }).networkPassphrase,
+    message: `Set mint prices — public: ${input.publicMintPriceXlm} XLM, allowlist: ${input.allowlistMintPriceXlm} XLM${input.maxMintPerWallet ? `, max ${input.maxMintPerWallet}/wallet` : ""}. Sign to update.`,
+  };
+}
+
+export async function prepareSetAllowlistEntry(input: {
+  walletAddress: string;
+  collectionContract: string;
+  allowWallet: string;
+  maxMints?: number;
+  customPriceXlm?: string;
+}) {
+  const contractId = resolveCollectionId(input.collectionContract);
+  const { Address, nativeToScVal } = await import("@stellar/stellar-sdk");
+  const customPrice = input.customPriceXlm
+    ? BigInt(toStroops(input.customPriceXlm))
+    : 0n;
+  const built = await buildContractInvoke({
+    sourcePublicKey: input.walletAddress,
+    contractId,
+    method: "set_allowlist_entry",
+    args: [
+      Address.fromString(input.walletAddress).toScVal(),
+      Address.fromString(input.allowWallet).toScVal(),
+      nativeToScVal(Math.max(0, input.maxMints ?? 0), { type: "u32" }),
+      nativeToScVal(customPrice, { type: "i128" }),
+    ],
+  });
+  return {
+    type: "nft_allowlist" as const,
+    collectionContract: contractId,
+    allowWallet: input.allowWallet,
+    xdr: built.xdr,
+    networkPassphrase: built.networkPassphrase,
+    message: `Add ${input.allowWallet.slice(0, 8)}… to the collection allowlist${input.customPriceXlm ? ` at ${input.customPriceXlm} XLM` : ""}. Sign to confirm.`,
+  };
+}
+
+export async function formatCollectionMintStatus(
+  collectionContract: string,
+  walletAddress?: string
+): Promise<string> {
+  try {
+    const info = await getCollectionMintInfo(collectionContract, walletAddress);
+    const lines = [
+      "**Primary mint (drop)**",
+      info.allowlistActive
+        ? `• Allowlist stage: **on** · ${info.allowlistMintPriceXlm} XLM`
+        : "• Allowlist stage: off",
+      info.publicMintActive
+        ? `• Public stage: **on** · ${info.publicMintPriceXlm === "0" ? "free" : `${info.publicMintPriceXlm} XLM`}`
+        : "• Public stage: off",
+      info.maxMintPerWallet
+        ? `• Max mints per wallet: ${info.maxMintPerWallet}`
+        : "• Max mints per wallet: unlimited",
+      "",
+      "**Secondary marketplace**",
+      info.floorPriceXlm
+        ? `• Floor price: **${info.floorPriceXlm} XLM** (lowest active listing)`
+        : "• Floor price: none listed yet",
+      "",
+      "Creator commands:",
+      '• "set public mint price 5 XLM on my collection"',
+      '• "open allowlist mint" / "open public mint"',
+      '• "add G… to allowlist for 2 mints at 3 XLM"',
+      '• "list NFT #1 for 10 XLM" (secondary sale)',
+    ];
+    return lines.join("\n");
+  } catch (err: any) {
+    return err?.message ?? "Could not load mint config.";
+  }
+}
+
 export async function formatNftCatalog(): Promise<string> {
  const id = process.env.ORBIT_NFT_CONTRACT_ID?.trim();
  const factory = process.env.ORBIT_NFT_FACTORY_CONTRACT_ID?.trim();
  return [
- "Orbit NFT launchpad (SEP-50 + OpenSea-style metadata, Soroban testnet):",
+ "Orbit NFT launchpad (SEP-50 + OpenSea-style drops, Soroban testnet):",
  "",
- "• Create collection (guided): \"create NFT collection The Clanners, total supply 1000\" → description → artwork → sign card",
- "• Media pack (unique drop): upload a ZIP of 1.png…N.png on the create card, or \"upload media pack\" then \"mint next NFT\"",
- "• Or one-shot: \"create NFT collection Foxes symbol FOX max 1000 royalty 5% description \\\"…\\\" image https://…\"",
- "• Mint with metadata: \"mint an NFT called Stellar Fox image https://… traits Background=Nebula\"",
- "• Mint next from pack: \"mint next NFT\" / \"mint next from my collection\"",
- "• Beta reward: feedback (heart) → \"claim my beta NFT\"",
- "• List / buy / transfer: \"list NFT #1 for 5 XLM\" · \"buy NFT #1\" · \"transfer NFT #1 to G…\"",
+ "**Primary mint (SeaDrop-style)**",
+ "• Public mint price + allowlist/presale price at create time",
+ "• Stages: allowlist → public (creator toggles on-chain)",
+ "• Per-wallet mint limits · paid mints split creator + 0.5% Orbit",
+ "",
+ "**Create & mint**",
+ "• Create collection (guided): \"create NFT collection Cloud Explorers supply 777 mint price 5 XLM\"",
+ "• Media pack (unique drop): upload ZIP → \"mint next NFT\"",
+ "• Mint: \"mint an NFT\" (shows price if collection has paid mint)",
+ "",
+ "**Secondary marketplace**",
+ "• List / buy / transfer: \"list NFT #1 for 5 XLM\" · \"buy NFT #1\"",
+ "• Floor price = lowest active listing (on-chain `floor_price`)",
  "• Cancel listing: \"cancel listing NFT #1\"",
- "• Holdings: \"view my NFTs\"",
  "",
+ "**Creator tools**",
+ "• \"open public mint\" / \"open allowlist mint\"",
+ "• \"set mint price 10 XLM\" · \"add G… to allowlist\"",
+ "• \"mint status for my collection\"",
+ "",
+ "• Beta reward: feedback → \"claim my beta NFT\"",
+ "• Holdings: \"view my NFTs\"",
  `Secondary sales: ${(NFT_DEFAULT_ROYALTY_BPS / 100).toFixed(2)}% creator royalty (0–10%, set at create) + ${(NFT_PLATFORM_FEE_BPS / 100).toFixed(2)}% Orbit platform fee; rest to seller.`,
  "Collection create is multi-turn by default; say cancel anytime during setup.",
  "Standard: SEP-50 (name/symbol/token_uri/approve/transfer) — Freighter-compatible.",
@@ -678,25 +1090,7 @@ async function simulateU32Call(
  method: string,
  args: any[]
 ): Promise<any> {
- const { Contract, TransactionBuilder, Networks, BASE_FEE, scValToNative } =
- await import("@stellar/stellar-sdk");
- const { Server } = await import("@stellar/stellar-sdk/rpc");
- const { getDemoKeypair } = await import("./stellar");
- const rpc = new Server(SOROBAN_RPC);
- const demo = await getDemoKeypair();
- const account = await rpc.getAccount(demo.publicKey());
- const contract = new Contract(contractId);
- const tx = new TransactionBuilder(account, {
- fee: BASE_FEE,
- networkPassphrase: Networks.TESTNET,
- })
- .addOperation(contract.call(method, ...args))
- .setTimeout(30)
- .build();
- const sim = await rpc.simulateTransaction(tx);
- const retval = (sim as any)?.result?.retval;
- if (!retval) return null;
- return scValToNative(retval);
+ return simulateContractCall(contractId, method, args);
 }
 
 async function enrichNftItem(
@@ -747,10 +1141,30 @@ async function enrichNftItem(
  if (meta) {
  if (typeof meta.name === "string" && meta.name.trim()) name = meta.name.trim();
  if (typeof meta.description === "string") description = meta.description;
- imageUrl = absUrl(typeof meta.image === "string" ? meta.image : imageUrl);
- animationUrl = absUrl(
- typeof meta.animation_url === "string" ? meta.animation_url : animationUrl
- );
+ const img =
+ typeof meta.image === "string" && meta.image.trim() ? meta.image.trim() : null;
+ const anim =
+ typeof meta.animation_url === "string" && meta.animation_url.trim()
+  ? meta.animation_url.trim()
+  : null;
+ imageUrl = absUrl(img) ?? imageUrl;
+ animationUrl = absUrl(anim) ?? animationUrl;
+ }
+ // DB fallback when remote fetch fails or image field is empty
+ if (!imageUrl && !animationUrl) {
+  const idMatch = metadataUri.match(/\/api\/nft\/meta\/([a-f0-9]{16,64})/i);
+  if (idMatch?.[1]) {
+   try {
+    const { getNftMetadata } = await import("./nft-metadata");
+    const local = await getNftMetadata(idMatch[1]);
+    if (local?.image?.trim()) imageUrl = absUrl(local.image);
+    if (local?.animation_url?.trim()) animationUrl = absUrl(local.animation_url);
+    if (typeof local?.name === "string" && local.name.trim()) name = local.name.trim();
+    if (typeof local?.description === "string") description = local.description;
+   } catch {
+    /* optional */
+   }
+  }
  }
  }
 

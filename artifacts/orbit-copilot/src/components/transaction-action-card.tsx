@@ -108,6 +108,7 @@ export interface ChatAction {
     | "defindex_withdraw"
     | "meridian_deposit"
     | "meridian_withdraw"
+    | "cctp_bridge"
     | "aquarius_swap"
  | "connect_wallet"
  | "add_trustline";
@@ -277,7 +278,13 @@ async function rebuildOrbitNativeXdr(
  action: ChatAction,
  publicKey: string,
  slippageBps: number
-): Promise<{ xdr: string; networkPassphrase?: string; estimatedDestAmount?: string }> {
+): Promise<{
+ xdr: string;
+ networkPassphrase?: string;
+ estimatedDestAmount?: string;
+ metadataUri?: string;
+ imageUrl?: string;
+}> {
  let endpoint = "";
  let body: Record<string, unknown> = { walletAddress: publicKey };
 
@@ -324,10 +331,35 @@ async function rebuildOrbitNativeXdr(
  endpoint = "/api/nft/claim-beta";
  } else {
  endpoint = "/api/nft/mint";
+ const hasLocalMedia = Boolean(
+  action.imageDataUrl ||
+  action.animationDataUrl ||
+  action.imageUrl?.trim()
+ );
+ if (!hasLocalMedia && !action.mediaPackId && !action.useMediaPack) {
+  throw new Error(
+   "Attach artwork on the mint card before signing so your NFT image shows in the gallery."
+  );
+ }
+ const mintName =
+  (action.sendAsset && !action.sendAsset.includes("://")
+   ? action.sendAsset
+   : null) ||
+  (action.marketHint && !action.marketHint.includes("://")
+   ? action.marketHint
+   : null) ||
+  "Orbit NFT";
+ const staleMeta =
+  typeof action.metadataUri === "string"
+   ? action.metadataUri
+   : typeof action.marketHint === "string" && action.marketHint.includes("://")
+     ? action.marketHint
+     : undefined;
  body = {
  ...body,
- name: action.sendAsset ?? action.marketHint,
- metadataUri: action.metadataUri,
+ name: mintName,
+ // Drop stale metadataUri when user attached a fresh image so the API rebuilds SEP-50 JSON.
+ metadataUri: hasLocalMedia ? undefined : staleMeta,
  description: action.description,
  image: action.imageUrl,
  imageDataUrl: action.imageDataUrl,
@@ -468,6 +500,16 @@ case "meridian_withdraw":
   endpoint = "/api/meridian/withdraw";
   body = { ...body, amount: action.sendAmount, shares: action.sendAmount };
   break;
+case "cctp_bridge":
+  endpoint = "/api/cctp/bridge";
+  body = {
+    ...body,
+    amount: action.sendAmount,
+    destination: action.destination,
+    destAsset: action.destAsset,
+    marketHint: action.marketHint,
+  };
+  break;
  case "blend_usdc_swap":
  endpoint = "/api/blend/swap-usdc";
  body = {
@@ -520,6 +562,9 @@ case "meridian_withdraw":
  : data.estimatedDestAmount != null
  ? String(data.estimatedDestAmount)
  : undefined,
+ metadataUri:
+ typeof data.metadataUri === "string" ? data.metadataUri : undefined,
+ imageUrl: typeof data.imageUrl === "string" ? data.imageUrl : undefined,
  };
 }
 
@@ -586,6 +631,7 @@ function isOrbitNativeAction(type: ChatAction["type"]) {
     type === "defindex_withdraw" ||
     type === "meridian_deposit" ||
     type === "meridian_withdraw" ||
+    type === "cctp_bridge" ||
     type === "blend_claim" ||
  type === "blend_usdc_swap" ||
  type === "aquarius_swap"
@@ -666,6 +712,8 @@ function actionTitle(action: ChatAction): string {
       return "Meridian Deposit";
     case "meridian_withdraw":
       return "Meridian Withdraw";
+    case "cctp_bridge":
+      return "CCTP Bridge (USDC)";
     case "steldex_swap":
  return "StelDex Swap";
  case "steldex_add_liquidity":
@@ -1245,6 +1293,8 @@ export function TransactionActionCard({
  ...prev,
  xdr: rebuilt.xdr,
  networkPassphrase: rebuilt.networkPassphrase ?? prev.networkPassphrase,
+ ...(rebuilt.metadataUri ? { metadataUri: rebuilt.metadataUri } : {}),
+ ...(rebuilt.imageUrl ? { imageUrl: rebuilt.imageUrl, imageDataUrl: undefined } : {}),
  }));
  if (rebuilt.estimatedDestAmount) {
  setEstimatedDest(rebuilt.estimatedDestAmount);
@@ -1264,6 +1314,30 @@ export function TransactionActionCard({
  const txHash = await submitSignedToSoroban(signedXdr);
  await recordBetaClaimIfNeeded(txHash);
  setHash(txHash);
+ if (action.type === "cctp_bridge" && txHash) {
+  setProgress("Polling Circle Iris attestation…");
+  let attestText = "";
+  for (let i = 0; i < 8; i++) {
+   await new Promise((r) => setTimeout(r, i === 0 ? 4000 : 5000));
+   try {
+    const ar = await fetch(
+     `/api/cctp/attestation?txHash=${encodeURIComponent(txHash)}`
+    );
+    const ad = await ar.json().catch(() => ({}));
+    if (ad?.status === "complete") {
+     attestText =
+      typeof ad.text === "string"
+       ? ad.text
+       : "CCTP attestation ready — destination mint can proceed.";
+     break;
+    }
+    if (ad?.status === "failed") break;
+   } catch {
+    /* keep polling */
+   }
+  }
+  if (attestText) setOutcomeLine(attestText);
+ }
  setStatus("success");
  return;
  }
@@ -1481,13 +1555,32 @@ export function TransactionActionCard({
  setMediaBusy(true);
  try {
  const dataUrl = await fileToDataUrl(file);
+ // Upload immediately so mint rebuild uses a durable URL (not a huge data URL in JSON).
+ let uploadedUrl: string | undefined;
+ if (publicKey) {
+  const res = await fetch("/api/nft/media", {
+   method: "POST",
+   headers: { "Content-Type": "application/json" },
+   body: JSON.stringify({ walletAddress: publicKey, dataUrl }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || typeof data?.url !== "string") {
+   throw new Error(
+    typeof data?.error === "string" ? data.error : "Image upload failed"
+   );
+  }
+  uploadedUrl = data.url as string;
+ }
  setAction((prev) => ({
  ...prev,
- imageDataUrl: dataUrl,
- imageUrl: undefined,
+ // Prefer hosted URL; keep dataUrl only as offline fallback when wallet not connected.
+ imageDataUrl: uploadedUrl ? undefined : dataUrl,
+ imageUrl: uploadedUrl ?? undefined,
+ // Force mint rebuild to bake this media into SEP-50 metadata.
+ metadataUri: undefined,
  }));
- } catch {
- setMediaError("Could not read that file.");
+ } catch (err: any) {
+ setMediaError(err?.message ?? "Could not upload that file.");
  } finally {
  setMediaBusy(false);
  if (imageInputRef.current) imageInputRef.current.value = "";
@@ -2059,7 +2152,7 @@ export function TransactionActionCard({
  className="h-12 w-12 rounded-lg object-cover ring-1 ring-border"
  />
  <p className="text-[11px] text-muted-foreground truncate min-w-0">
- {action.imageDataUrl ? "Local file ready" : action.imageUrl}
+ {action.imageDataUrl ? "Local file ready" : "Image uploaded"}
  </p>
  </div>
  ) : (

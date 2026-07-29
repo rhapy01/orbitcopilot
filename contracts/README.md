@@ -30,9 +30,9 @@ PERPS_ID=$(stellar contract deploy \
 
 ### Orbit NFT (SEP-50 collection + marketplace)
 
-Redeploy required after marketplace fee upgrade (`initialize` now takes royalty + platform fee args).
+Redeploy required after marketplace fee upgrade or mint-drop upgrade (`initialize` takes `fees` + `mint_config`).
 
-Secondary sales split (on-chain in `buy`):
+Primary mint (SeaDrop-style): `mint_config` sets public/allowlist prices, per-wallet caps, and stages. Secondary sales split (on-chain in `buy`):
 - **0.5%** Orbit platform fee → `platform_fee_receiver`
 - **2.5%** default creator royalty (0–10%, set at create / `set_royalty`) → collection creator
 - **remainder** → seller
@@ -57,7 +57,8 @@ stellar contract invoke --id $NFT_ID --source orbit-admin --network testnet -- \
   --payment_token $XLM_SAC \
   --max_supply 0 \
   --open_mint true \
-  --fees '{ "royalty_bps": 250, "royalty_receiver": "'"$(stellar keys address orbit-admin)"'", "platform_fee_bps": 50, "platform_fee_receiver": "'"$PLATFORM_FEE"'" }'
+  --fees '{ "royalty_bps": 250, "royalty_receiver": "'"$(stellar keys address orbit-admin)"'", "platform_fee_bps": 50, "platform_fee_receiver": "'"$PLATFORM_FEE"'" }' \
+  --mint_config '{ "public_mint_price": "0", "allowlist_mint_price": "0", "max_mint_per_wallet": 0, "allowlist_active": false, "public_mint_active": true }'
 ```
 
 ### Orbit NFT Factory (optional — anyone creates collections)

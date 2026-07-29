@@ -68,6 +68,8 @@ export function outcomeSummary(action: ChatAction): string {
  const title =
  action.type === "send"
  ? `Sent ${action.sendAmount ?? ""} ${action.sendAsset ?? ""}`
+ : action.type === "cctp_bridge"
+ ? `Bridged ${action.sendAmount ?? ""} USDC → ${action.destAsset ?? "EVM"} (${action.destination ?? ""})`
  : action.type.includes("swap")
  ? `Swapped ${action.sendAmount ?? ""} ${action.sendAsset ?? ""} → ${action.destAsset ?? ""}`
  : action.type.includes("liquidity")
@@ -76,6 +78,8 @@ export function outcomeSummary(action: ChatAction): string {
  ? `Staked on ${action.pair ?? "farm"}`
  : action.type.startsWith("blend_")
  ? `Blend ${action.type.replace("blend_", "")} ${action.sendAmount ?? ""} ${action.sendAsset ?? ""}`
+ : action.type.startsWith("defindex_")
+ ? `DeFindex ${action.type.replace("defindex_", "")} ${action.sendAmount ?? ""} ${action.sendAsset ?? ""}`
  : action.type.startsWith("predict_")
  ? `Prediction market action`
  : action.type.startsWith("perp_")
@@ -83,6 +87,9 @@ export function outcomeSummary(action: ChatAction): string {
  : `On-chain action (${action.type})`;
  if (action.type === "steldex_swap" && action.destAsset) {
  return `${title.trim()} - confirmed on Stellar Testnet. Ask “what’s my ${action.destAsset} balance?” to verify (Soroban tokens).`;
+ }
+ if (action.type === "cctp_bridge") {
+ return `${title.trim()} - burn confirmed on Stellar Testnet. Ask “cctp attestation <txHash>” in ~30s for Iris status.`;
  }
  return `${title.trim()} - confirmed on Stellar Testnet`;
 }

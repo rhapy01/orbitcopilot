@@ -350,7 +350,10 @@ export async function enrichChatAction(
     type === "nft_mint" ||
     type === "nft_list" ||
     type === "nft_buy" ||
-    type === "nft_transfer"
+    type === "nft_transfer" ||
+    type === "defindex_deposit" ||
+    type === "defindex_withdraw" ||
+    type === "cctp_bridge"
   ) {
     const wallet =
       typeof opts?.publicKey === "string" && opts.publicKey.startsWith("G")
@@ -455,6 +458,64 @@ export async function enrichChatAction(
           sendAsset: "XLM",
           marketHint: built.market.slug,
           outcome,
+          xdr: built.xdr,
+          networkPassphrase: built.networkPassphrase,
+        } as EnrichedAction;
+      }
+      if (type === "defindex_deposit") {
+        const { prepareDefindexDeposit } = await import("./defindex");
+        if (!sendAmount) return { type, ...raw } as EnrichedAction;
+        const built = await prepareDefindexDeposit({
+          walletAddress: wallet,
+          amount: sendAmount,
+          asset: sendAsset || "XLM",
+        });
+        return {
+          ...raw,
+          type,
+          sendAmount: built.sendAmount,
+          sendAsset: built.sendAsset,
+          poolContract: built.vaultAddress,
+          xdr: built.xdr,
+          networkPassphrase: built.networkPassphrase,
+        } as EnrichedAction;
+      }
+      if (type === "defindex_withdraw") {
+        const { prepareDefindexWithdraw } = await import("./defindex");
+        if (!sendAmount) return { type, ...raw } as EnrichedAction;
+        const built = await prepareDefindexWithdraw({
+          walletAddress: wallet,
+          amount: sendAmount,
+          asset: sendAsset || "XLM",
+        });
+        return {
+          ...raw,
+          type,
+          sendAmount: built.sendAmount,
+          sendAsset: built.sendAsset,
+          poolContract: built.vaultAddress,
+          xdr: built.xdr,
+          networkPassphrase: built.networkPassphrase,
+        } as EnrichedAction;
+      }
+      if (type === "cctp_bridge") {
+        const { prepareCctpBridge } = await import("./cctp");
+        if (!sendAmount || !destination) return { type, ...raw } as EnrichedAction;
+        const built = await prepareCctpBridge({
+          walletAddress: wallet,
+          amount: sendAmount,
+          destinationEvm: destination,
+          destChain: String(raw.destAsset ?? raw.marketHint ?? destAsset ?? "base"),
+        });
+        return {
+          ...raw,
+          type,
+          sendAmount: built.sendAmount,
+          sendAsset: built.sendAsset,
+          destAsset: built.destAsset,
+          destination: built.destination,
+          marketHint: built.marketHint,
+          poolContract: built.poolContract,
           xdr: built.xdr,
           networkPassphrase: built.networkPassphrase,
         } as EnrichedAction;

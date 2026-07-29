@@ -34,13 +34,20 @@ const ASSET_VOCAB: VocabEntry[] = [
 
 /** Protocol names - written as lowercase so `.includes("blend")` still works. */
 const PROTOCOL_VOCAB: VocabEntry[] = [
- { canonical: "blend", aliases: ["blend"] },
- { canonical: "steldex", aliases: ["steldex"] },
- { canonical: "soroswap", aliases: ["soroswap"] },
- { canonical: "aquarius", aliases: ["aquarius"] },
- { canonical: "reflector", aliases: ["reflector"] },
- { canonical: "friendbot", aliases: ["friendbot"] },
- { canonical: "phoenix", aliases: ["phoenix"] },
+ { canonical: "blend", aliases: ["blend", "blendd", "blennd", "blnd protocol"] },
+ { canonical: "steldex", aliases: ["steldex", "steldexx", "stelex", "unicorn steldex"] },
+ { canonical: "soroswap", aliases: ["soroswap", "soro swap", "soroswapp"] },
+ { canonical: "aquarius", aliases: ["aquarius", "aquarus", "aqua network"] },
+ { canonical: "reflector", aliases: ["reflector", "refector"] },
+ { canonical: "friendbot", aliases: ["friendbot", "friend bot", "fundbot"] },
+ { canonical: "phoenix", aliases: ["phoenix", "phenix"] },
+ { canonical: "defindex", aliases: ["defindex", "defiindex", "defi-index", "de-findex", "defiindexx", "difindex", "definidex"] },
+ { canonical: "meridian", aliases: ["meridian", "meridan", "meredian", "meridum"] },
+ { canonical: "orbit-supply", aliases: ["orbit-supply", "orbitsupply", "orbitsuply"] },
+ { canonical: "predict", aliases: ["predict", "prediction", "prediciton"] },
+ { canonical: "perps", aliases: ["perps", "perp", "perpetuals", "perpetual", "perps"] },
+ { canonical: "cctp", aliases: ["cctp", "circle cctp", "circle bridge", "usdc bridge"] },
+ { canonical: "bridge", aliases: ["bridge", "bridg", "brigde", "brdige"] },
 ];
 
 /** Never fuzzy-correct these - verbs, function words, and short finance jargon. */
@@ -281,10 +288,27 @@ export function normalizeUserMessage(content: string): NormalizeResult {
  const corrections: FuzzyCorrection[] = [];
 
  // Multi-word aliases first (longest wins)
- let text = content.replace(/\bstellar\s+token\b/gi, () => {
- corrections.push({ from: "stellar token", to: "STELLAR" });
- return "STELLAR";
- });
+ const multiWord: Array<{ re: RegExp; to: string; from: string }> = [
+  { re: /\bstellar\s+token\b/gi, to: "STELLAR", from: "stellar token" },
+  { re: /\bdefi\s*[- ]?\s*index\b/gi, to: "defindex", from: "defi index" },
+  { re: /\bde\s+findex\b/gi, to: "defindex", from: "de findex" },
+  { re: /\bsoro\s+swap\b/gi, to: "soroswap", from: "soro swap" },
+  { re: /\borbit\s+supply\b/gi, to: "orbit-supply", from: "orbit supply" },
+  { re: /\bfriend\s+bot\b/gi, to: "friendbot", from: "friend bot" },
+  { re: /\bunicorn\s+steldex\b/gi, to: "steldex", from: "unicorn steldex" },
+  { re: /\baqua\s+network\b/gi, to: "aquarius", from: "aqua network" },
+  { re: /\bprediction\s+markets?\b/gi, to: "predict", from: "prediction market" },
+  { re: /\bcircle\s+cctp\b/gi, to: "cctp", from: "circle cctp" },
+  { re: /\bcircle\s+bridge\b/gi, to: "cctp", from: "circle bridge" },
+  { re: /\busdc\s+bridge\b/gi, to: "cctp", from: "usdc bridge" },
+ ];
+ let text = content;
+ for (const m of multiWord) {
+  text = text.replace(m.re, () => {
+   corrections.push({ from: m.from, to: m.to });
+   return m.to;
+  });
+ }
 
  text = text.replace(
  /([a-zA-Z0-9]+)/g,

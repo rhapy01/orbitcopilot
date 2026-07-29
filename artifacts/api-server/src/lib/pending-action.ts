@@ -338,10 +338,10 @@ export const INCOMPLETE_SUPPLY_RE =
   /\b(?:supply|lend)\s+([a-zA-Z]{2,12})\b(?!\s*[/\d])/i;
 
 export const INCOMPLETE_DEPOSIT_RE =
-  /\b(?:deposit|stake)\s+([a-zA-Z]{2,12})\b(?:.*\b(?:into|on|to)\s+(defindex|meridian|orbit[\s-]?supply|blend)\b)/i;
+  /\b(?:deposit|stake)\s+([a-zA-Z]{2,12})\b(?:.*\b(?:into|on|to)\s+(defindex|defiindex|defi[\s-]?index|meridian|orbit[\s-]?supply|blend)\b)/i;
 
 export const INCOMPLETE_WITHDRAW_RE =
-  /\bwithdraw\s+([a-zA-Z]{2,12})\b(?:.*\b(?:from|on)\s+(defindex|meridian|orbit[\s-]?supply|blend)\b)/i;
+  /\bwithdraw\s+([a-zA-Z]{2,12})\b(?:.*\b(?:from|on)\s+(defindex|defiindex|defi[\s-]?index|meridian|orbit[\s-]?supply|blend)\b)/i;
 
 export const INCOMPLETE_BORROW_RE =
   /\bborrow\s+([a-zA-Z]{2,12})\b/i;

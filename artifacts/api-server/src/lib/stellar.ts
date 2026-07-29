@@ -393,6 +393,19 @@ export function resolveKnownAsset(codeRaw: string): Asset | null {
  return issuer ? new Asset(code, issuer) : Asset.native();
 }
 
+/** Horizon path entries are plain JSON; SDK pathPaymentStrictSend needs Asset instances. */
+function horizonAssetToSdkAsset(entry: {
+ asset_type: string;
+ asset_code?: string;
+ asset_issuer?: string;
+}): Asset {
+ if (entry.asset_type === "native") return Asset.native();
+ if (!entry.asset_code || !entry.asset_issuer) {
+ throw new Error("Invalid asset in Horizon path");
+ }
+ return new Asset(entry.asset_code, entry.asset_issuer);
+}
+
 export interface BuildTxParams {
  type: "send" | "swap";
  sourcePublicKey: string;
@@ -468,7 +481,7 @@ export async function buildTransaction(params: BuildTxParams): Promise<BuildTxRe
  destination: params.sourcePublicKey,
  destAsset,
  destMin,
- path: best.path as any,
+ path: (best.path ?? []).map(horizonAssetToSdkAsset),
  })
  );
  }

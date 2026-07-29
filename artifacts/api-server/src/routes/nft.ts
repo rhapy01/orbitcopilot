@@ -2,12 +2,17 @@ import { Router, type IRouter } from "express";
 import {
  formatNftCatalog,
  formatNftHoldings,
+ formatCollectionMintStatus,
+ getCollectionMintInfo,
  prepareCreateCollection,
  prepareNftBuy,
  prepareNftCancelListing,
  prepareNftList,
  prepareNftMint,
  prepareNftTransfer,
+ prepareSetAllowlistEntry,
+ prepareSetMintPrices,
+ prepareSetMintStages,
 } from "../lib/nft";
 import { getNftMetadata } from "../lib/nft-metadata";
 import { getNftMedia, storeNftMedia } from "../lib/nft-media";
@@ -349,6 +354,23 @@ router.post("/nft/create-collection", async (req, res): Promise<void> => {
         typeof req.body?.externalUrl === "string" ? req.body.externalUrl : undefined,
       maxSupply: req.body?.maxSupply != null ? Number(req.body.maxSupply) : 0,
       openMint: req.body?.openMint !== false,
+      publicMintPriceXlm:
+        typeof req.body?.publicMintPriceXlm === "string"
+          ? req.body.publicMintPriceXlm
+          : undefined,
+      allowlistMintPriceXlm:
+        typeof req.body?.allowlistMintPriceXlm === "string"
+          ? req.body.allowlistMintPriceXlm
+          : undefined,
+      maxMintPerWallet:
+        req.body?.maxMintPerWallet != null
+          ? Number(req.body.maxMintPerWallet)
+          : undefined,
+      allowlistActive: req.body?.allowlistActive === true,
+      publicMintActive:
+        req.body?.publicMintActive != null
+          ? req.body.publicMintActive !== false
+          : undefined,
       royaltyBps:
         req.body?.royaltyBps != null
           ? Number(req.body.royaltyBps)
@@ -361,6 +383,94 @@ router.post("/nft/create-collection", async (req, res): Promise<void> => {
     res.status(201).json(result);
   } catch (err: any) {
     res.status(400).json({ error: err?.message ?? "Create collection failed" });
+  }
+});
+
+router.post("/nft/set-mint-stages", async (req, res): Promise<void> => {
+  const walletAddress =
+    typeof req.body?.walletAddress === "string" ? req.body.walletAddress.trim() : "";
+  if (!walletAddress) {
+    res.status(400).json({ error: "walletAddress required" });
+    return;
+  }
+  try {
+    const result = await prepareSetMintStages({
+      walletAddress,
+      collectionContract: req.body?.collectionContract,
+      allowlistActive: req.body?.allowlistActive === true,
+      publicMintActive: req.body?.publicMintActive !== false,
+    });
+    res.status(201).json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err?.message ?? "Set mint stages failed" });
+  }
+});
+
+router.post("/nft/set-mint-prices", async (req, res): Promise<void> => {
+  const walletAddress =
+    typeof req.body?.walletAddress === "string" ? req.body.walletAddress.trim() : "";
+  if (!walletAddress) {
+    res.status(400).json({ error: "walletAddress required" });
+    return;
+  }
+  try {
+    const result = await prepareSetMintPrices({
+      walletAddress,
+      collectionContract: req.body?.collectionContract,
+      publicMintPriceXlm: String(req.body?.publicMintPriceXlm ?? "0"),
+      allowlistMintPriceXlm: String(req.body?.allowlistMintPriceXlm ?? "0"),
+      maxMintPerWallet:
+        req.body?.maxMintPerWallet != null
+          ? Number(req.body.maxMintPerWallet)
+          : undefined,
+    });
+    res.status(201).json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err?.message ?? "Set mint prices failed" });
+  }
+});
+
+router.post("/nft/allowlist", async (req, res): Promise<void> => {
+  const walletAddress =
+    typeof req.body?.walletAddress === "string" ? req.body.walletAddress.trim() : "";
+  const allowWallet =
+    typeof req.body?.allowWallet === "string" ? req.body.allowWallet.trim() : "";
+  if (!walletAddress || !allowWallet) {
+    res.status(400).json({ error: "walletAddress and allowWallet required" });
+    return;
+  }
+  try {
+    const result = await prepareSetAllowlistEntry({
+      walletAddress,
+      collectionContract: req.body?.collectionContract,
+      allowWallet,
+      maxMints: req.body?.maxMints != null ? Number(req.body.maxMints) : undefined,
+      customPriceXlm:
+        typeof req.body?.customPriceXlm === "string"
+          ? req.body.customPriceXlm
+          : undefined,
+    });
+    res.status(201).json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err?.message ?? "Allowlist update failed" });
+  }
+});
+
+router.get("/nft/mint-config", async (req, res): Promise<void> => {
+  const collection =
+    typeof req.query.collection === "string" ? req.query.collection.trim() : "";
+  const wallet =
+    typeof req.query.wallet === "string" ? req.query.wallet.trim() : undefined;
+  if (!collection?.startsWith("C")) {
+    res.status(400).json({ error: "collection contract id required" });
+    return;
+  }
+  try {
+    const info = await getCollectionMintInfo(collection, wallet);
+    const text = await formatCollectionMintStatus(collection, wallet);
+    res.json({ ...info, text });
+  } catch (err: any) {
+    res.status(502).json({ error: err?.message ?? "Mint config unavailable" });
   }
 });
 

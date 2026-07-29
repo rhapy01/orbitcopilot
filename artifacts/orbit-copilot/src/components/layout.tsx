@@ -195,9 +195,8 @@ export function Layout({
  <img
  src="/orbit-logo-ui.png"
  alt="Orbit"
- className="h-8 w-8 rounded-xl object-cover shadow-sm"
+ className="h-8 w-8 object-contain"
  />
- <span className="text-[15px] font-bold text-orbit-gradient">Orbit</span>
  </div>
  <button
  type="button"
@@ -424,13 +423,13 @@ export function Layout({
  <button
  type="button"
  className="flex min-w-0 items-center gap-1.5 rounded-lg px-2 py-1.5 text-[15px] font-semibold hover:bg-primary/5"
+ aria-label="Orbit"
  >
  <img
  src="/orbit-logo-ui.png"
- alt=""
- className="h-6 w-6 shrink-0 rounded-lg object-cover"
+ alt="Orbit"
+ className="h-7 w-7 shrink-0 object-contain"
  />
- <span className="truncate text-orbit-gradient">Orbit</span>
  <ChevronDown className="h-4 w-4 shrink-0 text-primary/60" />
  </button>
  </div>

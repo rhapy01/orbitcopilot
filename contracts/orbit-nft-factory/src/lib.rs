@@ -27,6 +27,17 @@ pub struct MarketplaceFeeConfig {
     pub platform_fee_receiver: Address,
 }
 
+/// Must match orbit-nft `MintConfig` field layout.
+#[contracttype]
+#[derive(Clone)]
+pub struct MintConfig {
+    pub public_mint_price: i128,
+    pub allowlist_mint_price: i128,
+    pub max_mint_per_wallet: u32,
+    pub allowlist_active: bool,
+    pub public_mint_active: bool,
+}
+
 #[contracttype]
 #[derive(Clone)]
 enum DataKey {
@@ -100,7 +111,7 @@ impl OrbitNftFactory {
     }
 
     /// Deploy a new SEP-50 Orbit NFT collection owned by `creator`.
-    /// `royalty_bps` 0–1000 (default callers should pass 250 = 2.5%).
+    /// Mint prices are in `mint_config` (payment-token stroops; 10_000_000 = 1 XLM).
     pub fn create_collection(
         env: Env,
         creator: Address,
@@ -111,10 +122,14 @@ impl OrbitNftFactory {
         max_supply: u32,
         open_mint: bool,
         royalty_bps: u32,
+        mint_config: MintConfig,
     ) -> Address {
         creator.require_auth();
         if royalty_bps > MAX_ROYALTY_BPS {
             panic!("royalty too high");
+        }
+        if mint_config.public_mint_price < 0 || mint_config.allowlist_mint_price < 0 {
+            panic!("mint price negative");
         }
         let wasm_hash: BytesN<32> = env.storage().instance().get(&DataKey::WasmHash).unwrap();
         let payment: Address = env.storage().instance().get(&DataKey::PaymentToken).unwrap();
@@ -143,7 +158,9 @@ impl OrbitNftFactory {
             platform_fee_receiver,
         };
 
-        // initialize(admin, name, symbol, base_uri, payment_token, max_supply, open_mint, fees)
+        let mint_config = mint_config;
+
+        // initialize(admin, name, symbol, base_uri, payment_token, max_supply, open_mint, fees, mint_config)
         let args: Vec<Val> = Vec::from_array(
             &env,
             [
@@ -155,6 +172,7 @@ impl OrbitNftFactory {
                 max_supply.into_val(&env),
                 open_mint.into_val(&env),
                 fees.into_val(&env),
+                mint_config.into_val(&env),
             ],
         );
         let _: Val = env.invoke_contract(&addr, &Symbol::new(&env, "initialize"), args);

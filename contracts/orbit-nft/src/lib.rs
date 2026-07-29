@@ -1,9 +1,10 @@
 #![no_std]
 //! Orbit NFT Collection — SEP-50 compatible non-fungible tokens + XLM marketplace.
 //!
-//! Implements the [SEP-50](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0050.md)
-//! NonFungibleToken surface so wallets/marketplaces can read name/symbol/token_uri,
-//! ownership, transfers, and approvals. Marketplace (list/buy) is an Orbit extension.
+//! Primary mint (OpenSea-style drops):
+//! - **Public stage**: anyone can mint at `public_mint_price` (0 = free).
+//! - **Allowlist stage**: only allowlisted wallets at `allowlist_mint_price` (per-wallet caps).
+//! - **Admin mint**: collection owner can always mint for free (airdrops / inventory).
 //!
 //! Secondary sales (`buy`) split list price:
 //! - platform fee (default 0.5%) → Orbit treasury
@@ -14,7 +15,7 @@ use soroban_sdk::{
     contract, contractimpl, contracttype, symbol_short, token, Address, Env, String, Symbol, Vec,
 };
 
-/// 0.5% Orbit platform fee on secondary sales.
+/// 0.5% Orbit platform fee on secondary sales and primary mints.
 pub const DEFAULT_PLATFORM_FEE_BPS: u32 = 50;
 /// 2.5% default creator royalty on secondary sales.
 pub const DEFAULT_ROYALTY_BPS: u32 = 250;
@@ -38,6 +39,41 @@ pub struct MarketplaceFeeConfig {
     pub royalty_receiver: Address,
     pub platform_fee_bps: u32,
     pub platform_fee_receiver: Address,
+}
+
+/// Primary mint drop configuration (SeaDrop-style stages).
+#[contracttype]
+#[derive(Clone)]
+pub struct MintConfig {
+    /// Price in payment token stroops for public stage (0 = free).
+    pub public_mint_price: i128,
+    /// Price for allowlist / presale stage (0 = free).
+    pub allowlist_mint_price: i128,
+    /// Max mints per wallet during primary (0 = unlimited).
+    pub max_mint_per_wallet: u32,
+    pub allowlist_active: bool,
+    pub public_mint_active: bool,
+}
+
+/// Read-only mint + marketplace snapshot for indexers.
+#[contracttype]
+#[derive(Clone)]
+pub struct MintConfigView {
+    pub public_mint_price: i128,
+    pub allowlist_mint_price: i128,
+    pub max_mint_per_wallet: u32,
+    pub allowlist_active: bool,
+    pub public_mint_active: bool,
+    pub open_mint: bool,
+}
+
+#[contracttype]
+#[derive(Clone)]
+pub struct AllowlistEntry {
+    /// Per-wallet cap during allowlist (0 = use collection `max_mint_per_wallet`).
+    pub max_mints: u32,
+    /// Custom price stroops (0 = use `allowlist_mint_price`).
+    pub custom_price: i128,
 }
 
 /// Sale proceeds breakdown (basis points use 10_000 = 100%).
@@ -66,6 +102,13 @@ enum DataKey {
     RoyaltyReceiver,
     PlatformFeeBps,
     PlatformFeeReceiver,
+    PublicMintPrice,
+    AllowlistMintPrice,
+    MaxMintPerWallet,
+    AllowlistActive,
+    PublicMintActive,
+    WalletMintCount(Address),
+    Allowlist(Address),
     Owner(u32),
     TokenUri(u32),
     Balance(Address),
@@ -81,8 +124,7 @@ pub struct OrbitNft;
 #[contractimpl]
 impl OrbitNft {
     /// Initialize a SEP-50 collection.
-    /// `max_supply` 0 = unlimited. `open_mint` lets anyone mint to themselves.
-    /// Fee bps are in basis points (100 = 1%).
+    /// `max_supply` 0 = unlimited. `open_mint` enables non-admin minting when a stage is active.
     pub fn initialize(
         env: Env,
         admin: Address,
@@ -93,12 +135,16 @@ impl OrbitNft {
         max_supply: u32,
         open_mint: bool,
         fees: MarketplaceFeeConfig,
+        mint_config: MintConfig,
     ) {
         if env.storage().instance().has(&DataKey::Admin) {
             panic!("already initialized");
         }
         admin.require_auth();
         Self::validate_fees(&fees);
+        if mint_config.public_mint_price < 0 || mint_config.allowlist_mint_price < 0 {
+            panic!("mint price negative");
+        }
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Name, &name);
         env.storage().instance().set(&DataKey::Symbol, &symbol);
@@ -110,10 +156,9 @@ impl OrbitNft {
         env.storage().instance().set(&DataKey::OpenMint, &open_mint);
         env.storage().instance().set(&DataKey::NextId, &1u32);
         Self::store_fees(&env, &fees);
+        Self::store_mint_config(&env, &mint_config);
     }
 
-    /// One-shot / upgrade helper: set marketplace fees when missing or update royalty.
-    /// Platform fee receiver can only be set if not already configured (Orbit lock-in).
     pub fn configure_marketplace_fees(env: Env, admin: Address, fees: MarketplaceFeeConfig) {
         Self::require_admin(&env, &admin);
         Self::validate_fees(&fees);
@@ -133,7 +178,6 @@ impl OrbitNft {
         }
     }
 
-    /// Collection admin can adjust creator royalty (0–10%).
     pub fn set_royalty(env: Env, admin: Address, royalty_bps: u32, royalty_receiver: Address) {
         Self::require_admin(&env, &admin);
         if royalty_bps > MAX_ROYALTY_BPS {
@@ -143,6 +187,136 @@ impl OrbitNft {
         env.storage()
             .instance()
             .set(&DataKey::RoyaltyReceiver, &royalty_receiver);
+    }
+
+    /// Update primary mint prices (stroops of payment token).
+    pub fn set_mint_prices(
+        env: Env,
+        admin: Address,
+        public_mint_price: i128,
+        allowlist_mint_price: i128,
+    ) {
+        Self::require_admin(&env, &admin);
+        if public_mint_price < 0 || allowlist_mint_price < 0 {
+            panic!("mint price negative");
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::PublicMintPrice, &public_mint_price);
+        env.storage()
+            .instance()
+            .set(&DataKey::AllowlistMintPrice, &allowlist_mint_price);
+    }
+
+    /// Toggle allowlist / public mint stages (OpenSea-style presale → public).
+    pub fn set_mint_stages(
+        env: Env,
+        admin: Address,
+        allowlist_active: bool,
+        public_mint_active: bool,
+    ) {
+        Self::require_admin(&env, &admin);
+        env.storage()
+            .instance()
+            .set(&DataKey::AllowlistActive, &allowlist_active);
+        env.storage()
+            .instance()
+            .set(&DataKey::PublicMintActive, &public_mint_active);
+    }
+
+    pub fn set_max_mint_per_wallet(env: Env, admin: Address, max_mint_per_wallet: u32) {
+        Self::require_admin(&env, &admin);
+        env.storage()
+            .instance()
+            .set(&DataKey::MaxMintPerWallet, &max_mint_per_wallet);
+    }
+
+    /// Add or update one allowlist wallet (private / presale mint).
+    pub fn set_allowlist_entry(
+        env: Env,
+        admin: Address,
+        wallet: Address,
+        max_mints: u32,
+        custom_price: i128,
+    ) {
+        Self::require_admin(&env, &admin);
+        if custom_price < 0 {
+            panic!("custom price negative");
+        }
+        env.storage().persistent().set(
+            &DataKey::Allowlist(wallet.clone()),
+            &AllowlistEntry {
+                max_mints,
+                custom_price,
+            },
+        );
+        env.events().publish(
+            (Symbol::new(&env, "allowlist_set"), wallet),
+            (max_mints, custom_price),
+        );
+    }
+
+    pub fn remove_allowlist_entry(env: Env, admin: Address, wallet: Address) {
+        Self::require_admin(&env, &admin);
+        env.storage()
+            .persistent()
+            .remove(&DataKey::Allowlist(wallet.clone()));
+        env.events()
+            .publish((Symbol::new(&env, "allowlist_rm"), wallet), ());
+    }
+
+    pub fn mint_config(env: Env) -> MintConfigView {
+        let open_mint: bool = env
+            .storage()
+            .instance()
+            .get(&DataKey::OpenMint)
+            .unwrap_or(false);
+        MintConfigView {
+            public_mint_price: env
+                .storage()
+                .instance()
+                .get(&DataKey::PublicMintPrice)
+                .unwrap_or(0i128),
+            allowlist_mint_price: env
+                .storage()
+                .instance()
+                .get(&DataKey::AllowlistMintPrice)
+                .unwrap_or(0i128),
+            max_mint_per_wallet: env
+                .storage()
+                .instance()
+                .get(&DataKey::MaxMintPerWallet)
+                .unwrap_or(0u32),
+            allowlist_active: env
+                .storage()
+                .instance()
+                .get(&DataKey::AllowlistActive)
+                .unwrap_or(false),
+            public_mint_active: env
+                .storage()
+                .instance()
+                .get(&DataKey::PublicMintActive)
+                .unwrap_or(false),
+            open_mint,
+        }
+    }
+
+    pub fn allowlist_entry(env: Env, wallet: Address) -> Option<AllowlistEntry> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Allowlist(wallet))
+    }
+
+    pub fn wallet_mint_count(env: Env, wallet: Address) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::WalletMintCount(wallet))
+            .unwrap_or(0u32)
+    }
+
+    /// Price this wallet would pay on the next primary mint (0 if admin-only / ineligible).
+    pub fn mint_price_for(env: Env, wallet: Address) -> i128 {
+        Self::resolve_mint_price(&env, &wallet).unwrap_or(0)
     }
 
     pub fn sale_fees(env: Env) -> SaleFees {
@@ -181,7 +355,6 @@ impl OrbitNft {
         env.storage().instance().get(&DataKey::Symbol).unwrap()
     }
 
-    /// Per-token URI, or collection base_uri when no override is set.
     pub fn token_uri(env: Env, token_id: u32) -> String {
         Self::require_exists(&env, token_id);
         if let Some(uri) = env
@@ -197,7 +370,6 @@ impl OrbitNft {
             .unwrap_or(String::from_str(&env, ""))
     }
 
-    /// Optional OpenSea-style collection metadata URI (contractURI).
     pub fn contract_uri(env: Env) -> String {
         env.storage()
             .instance()
@@ -323,45 +495,26 @@ impl OrbitNft {
 
     // ─── Mint (Orbit launchpad) ────────────────────────────────────────
 
-    /// Mint to `to`. `name` is accepted for chat/API UX; real display name lives in
-    /// the SEP-50 / OpenSea metadata JSON at `uri` (empty uri → collection base_uri).
+    /// Mint to `to`. Charges primary mint price when a public or allowlist stage applies.
     pub fn mint(env: Env, to: Address, _name: String, uri: String) -> u32 {
-        let open: bool = env
-            .storage()
-            .instance()
-            .get(&DataKey::OpenMint)
-            .unwrap_or(false);
-        if open {
-            to.require_auth();
-        } else {
-            let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
-            admin.require_auth();
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        let price = Self::resolve_mint_price(&env, &to);
+
+        match price {
+            Some(p) => {
+                to.require_auth();
+                Self::assert_mint_limit(&env, &to);
+                if p > 0 {
+                    Self::charge_mint_payment(&env, &to, &admin, p);
+                }
+                Self::inc_wallet_mint_count(&env, &to);
+            }
+            None => {
+                admin.require_auth();
+            }
         }
 
-        let max: u32 = env
-            .storage()
-            .instance()
-            .get(&DataKey::MaxSupply)
-            .unwrap_or(0);
-        let id: u32 = env.storage().instance().get(&DataKey::NextId).unwrap_or(1);
-        if max > 0 && id > max {
-            panic!("max supply reached");
-        }
-
-        env.storage().persistent().set(&DataKey::Owner(id), &to);
-        if uri.len() > 0 {
-            env.storage()
-                .persistent()
-                .set(&DataKey::TokenUri(id), &uri);
-        }
-        Self::inc_balance(&env, &to, 1);
-        Self::push_owner_token(&env, &to, id);
-        env.storage().instance().set(&DataKey::NextId, &(id + 1));
-
-        env.events()
-            .publish((symbol_short!("mint"), to.clone()), id);
-
-        id
+        Self::mint_internal(&env, &to, uri)
     }
 
     // ─── Marketplace (Orbit extension) ─────────────────────────────────
@@ -430,7 +583,6 @@ impl OrbitNft {
             panic!("fees exceed price");
         }
 
-        // If royalty receiver is the seller, fold royalty into one transfer.
         if royalty_amt > 0 && fees.royalty_receiver == listing.seller {
             let combined = seller_amt.checked_add(royalty_amt).unwrap_or(seller_amt);
             if combined > 0 {
@@ -463,6 +615,20 @@ impl OrbitNft {
         env.storage().persistent().get(&DataKey::Listing(token_id))
     }
 
+    /// Lowest active listing price in the collection (secondary floor).
+    pub fn floor_price(env: Env) -> i128 {
+        let supply = Self::total_supply(env.clone());
+        let mut floor: i128 = 0;
+        for token_id in 1..=supply {
+            if let Some(listing) = Self::get_listing(env.clone(), token_id) {
+                if listing.price > 0 && (floor == 0 || listing.price < floor) {
+                    floor = listing.price;
+                }
+            }
+        }
+        floor
+    }
+
     pub fn tokens_of(env: Env, owner: Address) -> Vec<u32> {
         env.storage()
             .persistent()
@@ -487,6 +653,174 @@ impl OrbitNft {
     }
 
     // ─── internals ─────────────────────────────────────────────────────
+
+    fn store_mint_config(env: &Env, mint_config: &MintConfig) {
+        env.storage()
+            .instance()
+            .set(&DataKey::PublicMintPrice, &mint_config.public_mint_price);
+        env.storage()
+            .instance()
+            .set(&DataKey::AllowlistMintPrice, &mint_config.allowlist_mint_price);
+        env.storage()
+            .instance()
+            .set(&DataKey::MaxMintPerWallet, &mint_config.max_mint_per_wallet);
+        env.storage()
+            .instance()
+            .set(&DataKey::AllowlistActive, &mint_config.allowlist_active);
+        env.storage()
+            .instance()
+            .set(&DataKey::PublicMintActive, &mint_config.public_mint_active);
+    }
+
+    fn resolve_mint_price(env: &Env, wallet: &Address) -> Option<i128> {
+        let open_mint: bool = env
+            .storage()
+            .instance()
+            .get(&DataKey::OpenMint)
+            .unwrap_or(false);
+        if !open_mint {
+            return None;
+        }
+
+        let allowlist_active: bool = env
+            .storage()
+            .instance()
+            .get(&DataKey::AllowlistActive)
+            .unwrap_or(false);
+        let public_active: bool = env
+            .storage()
+            .instance()
+            .get(&DataKey::PublicMintActive)
+            .unwrap_or(false);
+
+        if allowlist_active {
+            if let Some(entry) = env
+                .storage()
+                .persistent()
+                .get::<_, AllowlistEntry>(&DataKey::Allowlist(wallet.clone()))
+            {
+                let stage_price: i128 = env
+                    .storage()
+                    .instance()
+                    .get(&DataKey::AllowlistMintPrice)
+                    .unwrap_or(0);
+                let price = if entry.custom_price > 0 {
+                    entry.custom_price
+                } else {
+                    stage_price
+                };
+                return Some(price);
+            }
+        }
+
+        if public_active {
+            let price: i128 = env
+                .storage()
+                .instance()
+                .get(&DataKey::PublicMintPrice)
+                .unwrap_or(0);
+            return Some(price);
+        }
+
+        None
+    }
+
+    fn assert_mint_limit(env: &Env, wallet: &Address) {
+        let count: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::WalletMintCount(wallet.clone()))
+            .unwrap_or(0);
+
+        let mut cap: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::MaxMintPerWallet)
+            .unwrap_or(0);
+
+        let allowlist_active: bool = env
+            .storage()
+            .instance()
+            .get(&DataKey::AllowlistActive)
+            .unwrap_or(false);
+        if allowlist_active {
+            if let Some(entry) = env
+                .storage()
+                .persistent()
+                .get::<_, AllowlistEntry>(&DataKey::Allowlist(wallet.clone()))
+            {
+                if entry.max_mints > 0 {
+                    cap = entry.max_mints;
+                }
+            } else {
+                panic!("not on allowlist");
+            }
+        }
+
+        if cap > 0 && count >= cap {
+            panic!("mint limit reached");
+        }
+    }
+
+    fn inc_wallet_mint_count(env: &Env, wallet: &Address) {
+        let count: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::WalletMintCount(wallet.clone()))
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&DataKey::WalletMintCount(wallet.clone()), &(count + 1));
+    }
+
+    fn charge_mint_payment(env: &Env, payer: &Address, creator: &Address, price: i128) {
+        let payment: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::PaymentToken)
+            .unwrap();
+        let token_client = token::Client::new(env, &payment);
+        let fees = Self::sale_fees(env.clone());
+        let platform_amt = Self::bps_of(price, fees.platform_fee_bps);
+        let creator_amt = price.checked_sub(platform_amt).unwrap_or(0);
+        if creator_amt > 0 {
+            token_client.transfer(payer, creator, &creator_amt);
+        }
+        if platform_amt > 0 {
+            token_client.transfer(payer, &fees.platform_fee_receiver, &platform_amt);
+        }
+        env.events().publish(
+            (Symbol::new(env, "mint_sale"), payer.clone()),
+            (price, creator_amt, platform_amt),
+        );
+    }
+
+    fn mint_internal(env: &Env, to: &Address, uri: String) -> u32 {
+        let max: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::MaxSupply)
+            .unwrap_or(0);
+        let id: u32 = env.storage().instance().get(&DataKey::NextId).unwrap_or(1);
+        if max > 0 && id > max {
+            panic!("max supply reached");
+        }
+
+        env.storage().persistent().set(&DataKey::Owner(id), to);
+        if uri.len() > 0 {
+            env.storage()
+                .persistent()
+                .set(&DataKey::TokenUri(id), &uri);
+        }
+        Self::inc_balance(env, to, 1);
+        Self::push_owner_token(env, to, id);
+        env.storage().instance().set(&DataKey::NextId, &(id + 1));
+
+        env.events()
+            .publish((symbol_short!("mint"), to.clone()), id);
+
+        id
+    }
 
     fn validate_fees(fees: &MarketplaceFeeConfig) {
         if fees.royalty_bps > MAX_ROYALTY_BPS {

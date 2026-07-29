@@ -474,6 +474,9 @@ export function WalletConnectModal({ open, onOpenChange }: WalletConnectModalPro
  <p className="text-sm text-slate-400 mt-1">
  Sign-in code sent to <span className="text-violet-400">{email}</span>
  </p>
+ <p className="text-xs text-amber-400/90 mt-2 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 leading-relaxed">
+ Can’t find it? Check your <strong>Spam</strong> or <strong>Promotions</strong> folder and mark it as Not spam.
+ </p>
  </DialogHeader>
  <div className="space-y-4 mt-4">
  <div className="flex justify-center">
@@ -543,8 +546,9 @@ export function WalletConnectModal({ open, onOpenChange }: WalletConnectModalPro
  <Button className="w-full bg-violet-600 hover:bg-violet-700" onClick={handleBindEmailSend} disabled={loading}>
  {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Send verification code"}
  </Button>
- <p className="text-xs text-slate-500 text-center">
+ <p className="text-xs text-slate-500 text-center leading-relaxed">
  Already used this email before? We’ll detect that and send a sign-in code instead.
+ Codes sometimes land in <strong className="text-slate-400">Spam</strong> — check there too.
  </p>
  </div>
  </>
@@ -555,6 +559,9 @@ export function WalletConnectModal({ open, onOpenChange }: WalletConnectModalPro
  <DialogHeader>
  <DialogTitle>Verify email</DialogTitle>
  <p className="text-sm text-slate-400 mt-1">Enter the code sent to {email}</p>
+ <p className="text-xs text-amber-400/90 mt-2 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 leading-relaxed">
+ Can’t find it? Check your <strong>Spam</strong> or <strong>Promotions</strong> folder and mark it as Not spam.
+ </p>
  </DialogHeader>
  <div className="space-y-4 mt-4">
  <div className="flex justify-center">
@@ -678,6 +685,9 @@ export function WalletConnectModal({ open, onOpenChange }: WalletConnectModalPro
  <DialogHeader>
  <DialogTitle>Enter both codes</DialogTitle>
  <p className="text-sm text-slate-400 mt-1">Email OTP and authenticator app</p>
+ <p className="text-xs text-amber-400/90 mt-2 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 leading-relaxed">
+ Can’t find the email code? Check <strong>Spam</strong> / <strong>Promotions</strong>.
+ </p>
  </DialogHeader>
  <div className="space-y-4 mt-4">
  <div className="space-y-2">

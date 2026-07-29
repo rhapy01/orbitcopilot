@@ -468,7 +468,7 @@ const STELDEX_QUOTE_WALLET =
 
 /**
  * Autocorrect add-liquidity amounts to the live StelDex pool ratio.
- * Both user amounts are treated as max caps (never exceed either side).
+ * Both user amounts are max caps unless `anchorSide` / AUTO fixes one side.
  */
 export async function matchSteldexAddLiquidityAmounts(input: {
  symbol0: string;
@@ -477,6 +477,8 @@ export async function matchSteldexAddLiquidityAmounts(input: {
  token1Contract: string;
  amount0Max: string;
  amount1Max: string;
+ /** Fix pool token0 (0) or token1 (1) and derive the other from ratio. */
+ anchorSide?: 0 | 1;
 }): Promise<import("./defi-math").MatchedLpAmounts | null> {
  const { matchLpAmountsFromRatio } = await import("./defi-math");
  const dec0 = steldexDecimals(input.symbol0);
@@ -520,6 +522,7 @@ export async function matchSteldexAddLiquidityAmounts(input: {
  token1PerToken0: outHuman,
  decimals0: dec0,
  decimals1: dec1,
+ anchorSide: input.anchorSide,
  });
  } catch (err) {
  logger.warn({ err }, "StelDex LP ratio match failed");

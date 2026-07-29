@@ -273,30 +273,60 @@ export type SizedLpAmounts = {
  amount1: number;
 };
 
+/** True when the second LP amount should be derived from pool ratio (one-sided). */
+export function isLpAutoAmount(raw?: string | null): boolean {
+  if (raw == null) return true;
+  const t = String(raw).trim();
+  if (!t) return true;
+  return /^(auto|\*|max|\?|calc|calculate)$/i.test(t);
+}
+
+/**
+ * Size LP so one side is fixed (user-stated amount) and the other matches pool ratio.
+ */
+export function sizeLpAnchored(
+  anchorSide: 0 | 1,
+  anchorAmount: number,
+  token1PerToken0: number
+): SizedLpAmounts | null {
+  if (
+    !Number.isFinite(anchorAmount) ||
+    !Number.isFinite(token1PerToken0) ||
+    anchorAmount <= 0 ||
+    token1PerToken0 <= 0
+  ) {
+    return null;
+  }
+  if (anchorSide === 0) {
+    return { amount0: anchorAmount, amount1: anchorAmount * token1PerToken0 };
+  }
+  return { amount0: anchorAmount / token1PerToken0, amount1: anchorAmount };
+}
+
 /**
  * Size a 2-sided LP deposit so neither side exceeds the user's max caps,
  * matching pool ratio `token1PerToken0` (how much token1 per 1 token0).
  */
 export function sizeLpWithinCaps(
- amount0Max: number,
- amount1Max: number,
- token1PerToken0: number
+  amount0Max: number,
+  amount1Max: number,
+  token1PerToken0: number
 ): SizedLpAmounts | null {
- if (
- !Number.isFinite(amount0Max) ||
- !Number.isFinite(amount1Max) ||
- !Number.isFinite(token1PerToken0) ||
- amount0Max <= 0 ||
- amount1Max <= 0 ||
- token1PerToken0 <= 0
- ) {
- return null;
- }
- const need1ForFull0 = amount0Max * token1PerToken0;
- if (need1ForFull0 <= amount1Max * (1 + 1e-9)) {
- return { amount0: amount0Max, amount1: need1ForFull0 };
- }
- return { amount0: amount1Max / token1PerToken0, amount1: amount1Max };
+  if (
+    !Number.isFinite(amount0Max) ||
+    !Number.isFinite(amount1Max) ||
+    !Number.isFinite(token1PerToken0) ||
+    amount0Max <= 0 ||
+    amount1Max <= 0 ||
+    token1PerToken0 <= 0
+  ) {
+    return null;
+  }
+  const need1ForFull0 = amount0Max * token1PerToken0;
+  if (need1ForFull0 <= amount1Max * (1 + 1e-9)) {
+    return { amount0: amount0Max, amount1: need1ForFull0 };
+  }
+  return { amount0: amount1Max / token1PerToken0, amount1: amount1Max };
 }
 
 export type MatchedLpAmounts = {
@@ -311,45 +341,87 @@ export type MatchedLpAmounts = {
 
 /** Build user-facing match result from caps + ratio. */
 export function matchLpAmountsFromRatio(input: {
- symbol0: string;
- symbol1: string;
- amount0Max: string;
- amount1Max: string;
- token1PerToken0: number;
- decimals0?: number;
- decimals1?: number;
+  symbol0: string;
+  symbol1: string;
+  amount0Max: string;
+  amount1Max: string;
+  token1PerToken0: number;
+  decimals0?: number;
+  decimals1?: number;
+  /**
+   * Fix this pool side to the given max and derive the other from ratio.
+   * Use for one-sided prompts like "add 100 USDC (+ XLM)".
+   */
+  anchorSide?: 0 | 1;
 }): MatchedLpAmounts | null {
- const max0 = parseFloat(input.amount0Max);
- const max1 = parseFloat(input.amount1Max);
- const sized = sizeLpWithinCaps(max0, max1, input.token1PerToken0);
- if (!sized) return null;
+  const auto0 = isLpAutoAmount(input.amount0Max);
+  const auto1 = isLpAutoAmount(input.amount1Max);
+  const max0 = auto0 ? NaN : parseFloat(input.amount0Max);
+  const max1 = auto1 ? NaN : parseFloat(input.amount1Max);
 
- const d0 = input.decimals0 ?? 7;
- const d1 = input.decimals1 ?? 7;
- const amount0 = formatLpAmount(sized.amount0, d0);
- const amount1 = formatLpAmount(sized.amount1, d1);
- const a0 = parseFloat(amount0);
- const a1 = parseFloat(amount1);
- const rel0 = max0 > 0 ? Math.abs(a0 - max0) / max0 : 0;
- const rel1 = max1 > 0 ? Math.abs(a1 - max1) / max1 : 0;
- const adjusted = rel0 > 0.005 || rel1 > 0.005;
+  let anchorSide = input.anchorSide;
+  if (anchorSide == null) {
+    if (!auto0 && auto1) anchorSide = 0;
+    else if (auto0 && !auto1) anchorSide = 1;
+  }
 
- let note = "Amounts already match the pool ratio.";
- if (adjusted) {
- if (rel1 >= rel0) {
- note = `Matched pool ratio: kept ${amount0} ${input.symbol0}, reduced ${input.symbol1} from ${formatLpAmount(max1, d1)} → ${amount1}.`;
- } else {
- note = `Matched pool ratio: kept ${amount1} ${input.symbol1}, reduced ${input.symbol0} from ${formatLpAmount(max0, d0)} → ${amount0}.`;
- }
- }
+  let sized: SizedLpAmounts | null = null;
+  if (anchorSide === 0 && Number.isFinite(max0) && max0 > 0) {
+    sized = sizeLpAnchored(0, max0, input.token1PerToken0);
+  } else if (anchorSide === 1 && Number.isFinite(max1) && max1 > 0) {
+    sized = sizeLpAnchored(1, max1, input.token1PerToken0);
+  } else {
+    sized = sizeLpWithinCaps(max0, max1, input.token1PerToken0);
+  }
+  if (!sized) return null;
 
- return {
- amount0,
- amount1,
- amount0Max: formatLpAmount(max0, d0),
- amount1Max: formatLpAmount(max1, d1),
- adjusted,
- note,
- token1PerToken0: input.token1PerToken0,
- };
+  const d0 = input.decimals0 ?? 7;
+  const d1 = input.decimals1 ?? 7;
+  const amount0 = formatLpAmount(sized.amount0, d0);
+  const amount1 = formatLpAmount(sized.amount1, d1);
+  const a0 = parseFloat(amount0);
+  const a1 = parseFloat(amount1);
+
+  if (anchorSide === 0 || anchorSide === 1) {
+    const kept =
+      anchorSide === 0
+        ? `${amount0} ${input.symbol0}`
+        : `${amount1} ${input.symbol1}`;
+    const derived =
+      anchorSide === 0
+        ? `${amount1} ${input.symbol1}`
+        : `${amount0} ${input.symbol0}`;
+    return {
+      amount0,
+      amount1,
+      amount0Max: Number.isFinite(max0) ? formatLpAmount(max0, d0) : amount0,
+      amount1Max: Number.isFinite(max1) ? formatLpAmount(max1, d1) : amount1,
+      adjusted: true,
+      note: `Anchored on ${kept}; paired ${derived} from the live pool ratio.`,
+      token1PerToken0: input.token1PerToken0,
+    };
+  }
+
+  const rel0 = max0 > 0 ? Math.abs(a0 - max0) / max0 : 0;
+  const rel1 = max1 > 0 ? Math.abs(a1 - max1) / max1 : 0;
+  const adjusted = rel0 > 0.005 || rel1 > 0.005;
+
+  let note = "Amounts already match the pool ratio.";
+  if (adjusted) {
+    if (rel1 >= rel0) {
+      note = `Matched pool ratio: kept ${amount0} ${input.symbol0}, reduced ${input.symbol1} from ${formatLpAmount(max1, d1)} → ${amount1}.`;
+    } else {
+      note = `Matched pool ratio: kept ${amount1} ${input.symbol1}, reduced ${input.symbol0} from ${formatLpAmount(max0, d0)} → ${amount0}.`;
+    }
+  }
+
+  return {
+    amount0,
+    amount1,
+    amount0Max: formatLpAmount(max0, d0),
+    amount1Max: formatLpAmount(max1, d1),
+    adjusted,
+    note,
+    token1PerToken0: input.token1PerToken0,
+  };
 }

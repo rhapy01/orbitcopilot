@@ -429,13 +429,14 @@ export async function trySoroswapQuote(
 
 /**
  * Autocorrect Soroswap add-liquidity amounts to the live pool/route ratio.
- * Both user amounts are max caps.
+ * Both user amounts are max caps, unless one side is AUTO / anchored.
  */
 export async function matchSoroswapAddLiquidityAmounts(input: {
  symbolA: string;
  symbolB: string;
  amountAMax: string;
  amountBMax: string;
+ anchorSide?: 0 | 1;
 }): Promise<import("./defi-math").MatchedLpAmounts | null> {
  const { matchLpAmountsFromRatio } = await import("./defi-math");
  const a = await resolveSoroswapToken(input.symbolA);
@@ -455,6 +456,7 @@ export async function matchSoroswapAddLiquidityAmounts(input: {
  token1PerToken0: out,
  decimals0: a.decimals,
  decimals1: b.decimals,
+ anchorSide: input.anchorSide,
  });
  } catch (err) {
  logger.warn({ err }, "Soroswap LP ratio match failed");

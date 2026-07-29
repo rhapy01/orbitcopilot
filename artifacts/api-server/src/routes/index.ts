@@ -22,6 +22,7 @@ import orbitSupplyRouter from "./orbit-supply";
 import productRouter from "./product";
 import defindexRouter from "./defindex";
 import meridianRouter from "./meridian";
+import cctpRouter from "./cctp";
 
 const router: IRouter = Router();
 
@@ -48,5 +49,6 @@ router.use(tokenLaunchRouter);
 router.use(orbitSupplyRouter);
 router.use(defindexRouter);
 router.use(meridianRouter);
+router.use(cctpRouter);
 
 export default router;

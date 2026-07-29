@@ -9,7 +9,7 @@ import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { ArrowUp, Loader2, Sparkles, TrendingUp, Repeat2, LayoutDashboard, RotateCcw, Coins } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { TransactionActionCard, type ChatAction } from "@/components/transaction-action-card";
+import { TransactionActionCard, type ChatAction, type CompletedOutcome } from "@/components/transaction-action-card";
 import { NftGallery, type NftGalleryPayload } from "@/components/nft-gallery";
 import { OnboardingChecklist } from "@/components/onboarding-checklist";
 import { useWallet } from "@/hooks/use-wallet";
@@ -253,6 +253,10 @@ export default function ChatPage() {
  const [sendError, setSendError] = useState<string | null>(null);
  const [streamingText, setStreamingText] = useState<string | null>(null);
  const lastSentRef = useRef<string | null>(null);
+ /** Persist completed tx cards so remounts cannot reopen the sign button. */
+ const [completedByMsgId, setCompletedByMsgId] = useState<
+ Record<number, CompletedOutcome>
+ >({});
 
  const sendMutation = useMutation({
  mutationFn: async ({
@@ -287,6 +291,8 @@ export default function ChatPage() {
  let buffer = "";
  let accumulated = "";
  let finalMessage: ChatMessage & { sessionId?: number } | null = null;
+ let streamError: Error | null = null;
+ let streamSessionId: number | undefined;
 
  while (true) {
  const { done, value } = await reader.read();
@@ -298,7 +304,10 @@ export default function ChatPage() {
  if (!line.startsWith("data: ")) continue;
  try {
  const evt = JSON.parse(line.slice(6));
- if (evt.type === "delta") {
+ if (evt.type === "session" && typeof evt.sessionId === "number") {
+ streamSessionId = evt.sessionId;
+ storeSessionId(publicKey, evt.sessionId);
+ } else if (evt.type === "delta") {
  accumulated += evt.text;
  setStreamingText(accumulated);
  } else if (evt.type === "done") {
@@ -308,17 +317,18 @@ export default function ChatPage() {
  content: evt.content,
  metadata: evt.metadata,
  createdAt: evt.createdAt,
- sessionId: evt.sessionId,
+ sessionId: evt.sessionId ?? streamSessionId,
  };
  } else if (evt.type === "error") {
- throw new Error(evt.error || "Stream error");
+ streamError = new Error(evt.error || "Stream error");
  }
  } catch {
- // skip malformed events
+ // skip malformed JSON lines only
  }
  }
  }
  setStreamingText(null);
+ if (streamError) throw streamError;
  if (!finalMessage) throw new Error("No response received");
  return finalMessage;
  }
@@ -429,7 +439,10 @@ export default function ChatPage() {
 
  setInput("");
  setSendError(null);
- sendMutation.mutate({ content: text, sessionId: activeSessionId });
+ sendMutation.mutate({
+ content: text,
+ sessionId: activeSessionId ?? readStoredSessionId(publicKey),
+ });
  if (inputRef.current) {
  inputRef.current.style.height = "auto";
  }
@@ -708,7 +721,16 @@ export default function ChatPage() {
  key={`${msg.id}-queue`}
  action={actionsList[0]!}
  queue={actionsList}
- onOutcome={onTxOutcome}
+ completed={completedByMsgId[msg.id]}
+ onOutcome={(info) => {
+ if (info?.terminal) {
+ setCompletedByMsgId((prev) => ({
+ ...prev,
+ [msg.id]: { hash: info.hash, summary: info.summary },
+ }));
+ }
+ onTxOutcome(info);
+ }}
  onContinue={handleSend}
  />
  </div>
@@ -717,7 +739,16 @@ export default function ChatPage() {
  <TransactionActionCard
  key={`${msg.id}-action-${actionsList[0]!.type}-${actionsList[0]!.destAsset ?? actionsList[0]!.marketHint ?? ""}`}
  action={actionsList[0]!}
- onOutcome={onTxOutcome}
+ completed={completedByMsgId[msg.id]}
+ onOutcome={(info) => {
+ if (info?.terminal) {
+ setCompletedByMsgId((prev) => ({
+ ...prev,
+ [msg.id]: { hash: info.hash, summary: info.summary },
+ }));
+ }
+ onTxOutcome(info);
+ }}
  onContinue={handleSend}
  />
  </div>

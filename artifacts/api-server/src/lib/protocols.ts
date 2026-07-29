@@ -18,7 +18,8 @@ export type ProtocolId =
  | "orbit-perps"
  | "orbit-nft"
  | "orbit-token-launch"
- | "orbit-supply";
+ | "orbit-supply"
+ | "cctp";
 
 export interface ProtocolInfo {
  id: ProtocolId;
@@ -197,6 +198,17 @@ export const PROTOCOL_REGISTRY: ProtocolInfo[] = [
  capabilities: ["deposit", "withdraw", "claim-yield", "positions"],
  notes:
  "Soroban yield vault - USDC/pUSDC/EURC deposits earn 10 XLM per 1M per 24h (contracts/orbit-supply)",
+ },
+ {
+ id: "cctp",
+ name: "Circle CCTP",
+ category: "aggregator",
+ network: "testnet",
+ status: "live",
+ capabilities: ["usdc-bridge-out", "attestation"],
+ docs: "https://developers.circle.com/cctp/references/stellar-contracts",
+ notes:
+ "Burn Circle USDC on Stellar Testnet → mint on Base/Eth/Arb/OP Sepolia. Chat: bridge N USDC to base sepolia 0x…",
  },
 ];
 

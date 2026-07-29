@@ -153,6 +153,10 @@ export async function ensureChatSchema(): Promise<void> {
  ALTER TABLE chat_messages
  ADD COLUMN IF NOT EXISTS session_id integer
  `);
+ await db.execute(sql`
+ ALTER TABLE chat_sessions
+ ADD COLUMN IF NOT EXISTS nft_wizard_draft jsonb
+ `);
  await migrateLegacyMessages();
  })();
  }
@@ -323,4 +327,30 @@ export async function listRecentSessions(
  updatedAt: r.updatedAt,
  createdAt: r.createdAt,
  }));
+}
+
+/** Durable NFT collection wizard state (survives serverless cold starts). */
+export async function getNftWizardDraft(
+ sessionId: number
+): Promise<Record<string, unknown> | null> {
+ await ensureChatSchema();
+ const rows = await db.execute(sql`
+ SELECT nft_wizard_draft FROM chat_sessions WHERE id = ${sessionId} LIMIT 1
+ `);
+ const row = rows.rows[0] as { nft_wizard_draft?: unknown } | undefined;
+ const draft = row?.nft_wizard_draft;
+ return draft && typeof draft === "object" ? (draft as Record<string, unknown>) : null;
+}
+
+export async function setNftWizardDraft(
+ sessionId: number,
+ draft: Record<string, unknown> | null
+): Promise<void> {
+ await ensureChatSchema();
+ await db.execute(sql`
+ UPDATE chat_sessions
+ SET nft_wizard_draft = ${draft ? JSON.stringify(draft) : null}::jsonb,
+ updated_at = now()
+ WHERE id = ${sessionId}
+ `);
 }
