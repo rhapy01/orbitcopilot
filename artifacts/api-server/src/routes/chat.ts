@@ -319,8 +319,12 @@ const MERIDIAN_WITHDRAW_RE =
 // Circle CCTP: "bridge 1 USDC to base sepolia 0x…" / "cctp 2 usdc to ethereum 0x…"
 const CCTP_BRIDGE_RE =
   /\b(?:bridge|cctp)\s+([\d.]+)\s*usdc\b(?:.*?\b(?:to|onto|on)\b\s*)?(?:(base|ethereum|eth|arbitrum|arb|optimism|op)(?:\s+sepolia)?)?\s*(0x[a-fA-F0-9]{40})\b/i;
+/** Amount + USDC + optional chain, but missing 0x destination. */
+const CCTP_INCOMPLETE_RE =
+  /\b(?:bridge|cctp)\s+([\d.]+)\s*usdc\b(?:.*?\b(?:to|onto|on)\b\s*(base|ethereum|eth|arbitrum|arb|optimism|op)(?:\s+sepolia)?)?/i;
 const CCTP_ATTEST_RE =
   /\b(?:cctp\s+)?attest(?:ation)?\b.*?\b([a-f0-9]{64})\b/i;
+const EVM_ADDRESS_RE = /\b(0x[a-fA-F0-9]{40})\b/;
 
 type ChatReply = {
  text: string;
@@ -1090,7 +1094,22 @@ async function getDeterministicResponse(
  clearPendingAction(key);
  return { text: "Cancelled — tell me what you’d like to do next.", action: null };
  }
- if (pendingAct.kind === "add_liquidity") {
+ if (pendingAct.kind === "bridge") {
+  const evm = content.match(EVM_ADDRESS_RE)?.[1];
+  if (evm && pendingAct.amount) {
+   clearPendingAction(key);
+   const chain = pendingAct.toAsset || "base";
+   const synthetic = `bridge ${pendingAct.amount} USDC to ${chain} ${evm}`;
+   return getDeterministicResponse(synthetic, publicKey, options);
+  }
+  if (content.trim().split(/\s+/).length <= 8) {
+   return {
+    text: `${clarifyPrompt(pendingAct)}\n\n(Paste a \`0x…\` address, or say **cancel**.)`,
+    action: null,
+   };
+  }
+  clearPendingAction(key);
+ } else if (pendingAct.kind === "add_liquidity") {
   const assetReply = parseFollowUpAsset(content, pendingAct.asset);
   if (assetReply) {
    const synthetic = synthesizeLpIntentFromPending(pendingAct, assetReply);
@@ -2764,7 +2783,12 @@ async function getDeterministicResponse(
 
 // Circle CCTP — bridge USDC Stellar → EVM testnets
 {
-  if (/\b(?:cctp|circle\s+cctp)\b/i.test(content) && !CCTP_BRIDGE_RE.test(content) && !CCTP_ATTEST_RE.test(content)) {
+  if (
+    /\b(?:cctp|circle\s+cctp|bridge)\b/i.test(content) &&
+    !CCTP_BRIDGE_RE.test(content) &&
+    !CCTP_INCOMPLETE_RE.test(content) &&
+    !CCTP_ATTEST_RE.test(content)
+  ) {
     return { text: formatCctpHelp(), action: null };
   }
 
@@ -2808,6 +2832,25 @@ async function getDeterministicResponse(
     } catch (err: any) {
       return { text: err?.message ?? "Could not prepare CCTP bridge", action: null };
     }
+  }
+
+  // Incomplete: amount known, missing 0x → ask for EVM address (don't dead-end)
+  const cctpIncomplete = content.match(CCTP_INCOMPLETE_RE);
+  if (cctpIncomplete && !EVM_ADDRESS_RE.test(content)) {
+    const amount = cctpIncomplete[1]!;
+    const destChain = resolveCctpDest(cctpIncomplete[2] || "base");
+    const key = pendingActionKey(publicKey, sessionId);
+    setPendingAction(key, {
+      kind: "bridge",
+      amount,
+      asset: "USDC",
+      toAsset: destChain,
+      protocol: "cctp",
+    });
+    return {
+      text: clarifyPrompt(getPendingAction(key)!),
+      action: null,
+    };
   }
 }
 

@@ -15,7 +15,8 @@ export type PendingActionKind =
   | "borrow"
   | "repay"
   | "add_liquidity"
-  | "stake";
+  | "stake"
+  | "bridge";
 
 export type PendingActionClarify = {
   kind: PendingActionKind;
@@ -258,6 +259,10 @@ export function synthesizeIntentFromPending(
       const weeks = Math.min(156, Math.max(1, Math.floor(Number(amt))));
       return `stake ${a}/${b} for ${weeks} weeks`;
     }
+    case "bridge": {
+      // Amount follow-up is unusual; destination 0x is handled in chat.ts
+      return null;
+    }
     case "add_liquidity":
       // Amount follow-up for LP is unusual; prefer asset follow-up via synthesizeLpIntentFromPending
       return null;
@@ -314,6 +319,14 @@ export function clarifyPrompt(pendingAction: PendingActionClarify): string {
       return (
         pendingAction.promptHint ||
         `How many weeks do you want to lock **${pair}** on the StelDex farm?\n\nReply with a number, e.g. \`4\`, \`12 weeks\`, or \`52 weeks\` (1–156).`
+      );
+    }
+    case "bridge": {
+      const chain = pendingAction.toAsset || pendingAction.protocol || "base";
+      const amt = pendingAction.amount || "?";
+      return (
+        pendingAction.promptHint ||
+        `CCTP bridge **${amt} USDC** → **${chain}** needs your EVM recipient.\n\nReply with a \`0x…\` address (40 hex chars), e.g. \`0x1234…abcd\`.`
       );
     }
     default:

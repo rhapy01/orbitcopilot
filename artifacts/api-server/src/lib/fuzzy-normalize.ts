@@ -47,7 +47,7 @@ const PROTOCOL_VOCAB: VocabEntry[] = [
  { canonical: "predict", aliases: ["predict", "prediction", "prediciton"] },
  { canonical: "perps", aliases: ["perps", "perp", "perpetuals", "perpetual", "perps"] },
  { canonical: "cctp", aliases: ["cctp", "circle cctp", "circle bridge", "usdc bridge"] },
- { canonical: "bridge", aliases: ["bridge", "bridg", "brigde", "brdige"] },
+ { canonical: "bridge", aliases: ["bridge", "bridg", "brigde", "brdige", "ridge", "brige", "biridge"] },
 ];
 
 /** Never fuzzy-correct these - verbs, function words, and short finance jargon. */
