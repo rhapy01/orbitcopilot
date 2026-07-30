@@ -122,12 +122,12 @@ function mapCctpSimError(err: unknown): Error {
   const msg = String((err as any)?.message ?? err ?? "");
   if (/Error\(Contract,\s*#9\)/i.test(msg)) {
     return new Error(
-      "CCTP burn failed (USDC #9): not enough Circle USDC, or TokenMessenger is not approved yet. Sign the approve step first, then the burn."
+      "Bridge couldn’t start: not enough Circle USDC, or spending isn’t allowed yet. Confirm step 1 first, then step 2."
     );
   }
   if (/more than one operation/i.test(msg)) {
     return new Error(
-      "CCTP needs two separate signatures (approve, then burn). Retry the bridge — Orbit will show step 1 first."
+      "This bridge needs two separate confirmations. Retry — Orbit will show step 1 first."
     );
   }
   if (/Error\(Contract,\s*#7105\)/i.test(msg) || /InsufficientMaxFee/i.test(msg)) {
@@ -447,35 +447,60 @@ export type CctpAttestationStatus = {
 
 const EVM_CCTP: Record<
   CctpDestChain,
-  { rpc: string; messageTransmitter: string; label: string }
+  {
+    rpc: string;
+    messageTransmitter: string;
+    tokenMessenger: string;
+    usdc: string;
+    chainId: number;
+    label: string;
+  }
 > = {
   ethereum: {
     rpc: process.env.ETHEREUM_SEPOLIA_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com",
     messageTransmitter: "0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275",
+    tokenMessenger: "0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA",
+    usdc: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
+    chainId: 11155111,
     label: "Ethereum Sepolia",
   },
   base: {
     rpc: process.env.BASE_SEPOLIA_RPC_URL || "https://sepolia.base.org",
     messageTransmitter: "0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275",
+    tokenMessenger: "0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA",
+    usdc: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+    chainId: 84532,
     label: "Base Sepolia",
   },
   arbitrum: {
     rpc: process.env.ARBITRUM_SEPOLIA_RPC_URL || "https://sepolia-rollup.arbitrum.io/rpc",
     messageTransmitter: "0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275",
+    tokenMessenger: "0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA",
+    usdc: "0x75faf114eafb1BDbe2F0316DF897e267944B0759",
+    chainId: 421614,
     label: "Arbitrum Sepolia",
   },
   optimism: {
     rpc: process.env.OPTIMISM_SEPOLIA_RPC_URL || "https://sepolia.optimism.io",
     messageTransmitter: "0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275",
+    tokenMessenger: "0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA",
+    usdc: "0x5fd84259d66Cd46123540766Be93DFE6D3109853",
+    chainId: 11155420,
     label: "OP Sepolia",
   },
   arc: {
-    // Arc uses native USDC for gas — fund the same EVM_PRIVATE_KEY wallet with Arc USDC.
     rpc: process.env.ARC_TESTNET_RPC_URL || "https://rpc.testnet.arc.io",
     messageTransmitter: "0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275",
+    tokenMessenger: "0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA",
+    usdc: "0x3600000000000000000000000000000000000000",
+    chainId: 5042002,
     label: "Arc Testnet",
   },
 };
+
+export function getEvmCctpChain(chain: CctpDestChain) {
+  return EVM_CCTP[chain];
+}
 
 const MESSAGE_TRANSMITTER_ABI = [
   "function receiveMessage(bytes message, bytes attestation) returns (bool)",
@@ -678,11 +703,271 @@ export async function completeCctpDestination(input: {
 }
 
 export function formatCctpHelp(): string {
-  return "Try: `bridge 1 USDC to base 0xYourAddress` or `bridge 1 USDC to arc 0xYourAddress` (also eth / arb / op)";
+  return (
+    "Bridge out: `bridge 1 USDC to base 0xYourAddress` or `bridge 1 USDC to arc 0x…`\n" +
+    "Bridge in: `bridge in 10 USDC from base` (uses your connected G…) or `from arc to G…`"
+  );
 }
 
 export function truncateEvmAddress(addr: string): string {
   const a = addr.trim();
   if (a.length < 12) return a;
   return `${a.slice(0, 6)}…${a.slice(-4)}`;
+}
+
+/** Stellar contract strkey → 32-byte CCTP bytes32. */
+export async function stellarContractToBytes32(contractId: string): Promise<Buffer> {
+  const { StrKey } = await import("@stellar/stellar-sdk");
+  const raw = Buffer.from(StrKey.decodeContract(contractId));
+  if (raw.length !== 32) throw new Error("Invalid Stellar contract id for CCTP bytes32");
+  return raw;
+}
+
+/** Circle CctpForwarder hook: version(0) + utf8 length + G/M/C strkey. */
+export function buildCctpForwarderHookData(forwardRecipientStrkey: string): Buffer {
+  const recipient = forwardRecipientStrkey.trim();
+  if (!/^[GMC][A-Z0-9]{55}$/.test(recipient)) {
+    throw new Error("Stellar recipient must be a G… / M… / C… address");
+  }
+  const recipientBytes = Buffer.from(recipient, "utf8");
+  const hookData = Buffer.alloc(32 + recipientBytes.length);
+  hookData.writeUInt32BE(0, 24); // version
+  hookData.writeUInt32BE(recipientBytes.length, 28);
+  recipientBytes.copy(hookData, 32);
+  return hookData;
+}
+
+function parseUsdcEvm6(raw: string): bigint {
+  const t = raw.trim();
+  if (!t || !/^\d+(\.\d+)?$/.test(t)) {
+    throw new Error("USDC amount must be a positive number");
+  }
+  const [wholeRaw, fracRaw = ""] = t.split(".");
+  const whole = BigInt(wholeRaw || "0");
+  const fracPadded = (fracRaw + "000000").slice(0, 6);
+  const total = whole * 1_000_000n + BigInt(fracPadded || "0");
+  if (total <= 0n) throw new Error("USDC amount must be positive");
+  return total;
+}
+
+export type CctpBridgeInAction = {
+  type: "cctp_bridge_in";
+  cctpStep: "evm_approve" | "evm_burn" | "mint_and_forward";
+  sendAmount: string;
+  sendAsset: "USDC";
+  destAsset: "stellar";
+  sourceChain: CctpDestChain;
+  destination: string;
+  sourceDomain: number;
+  destinationDomain: number;
+  chainId: number;
+  marketHint: string;
+  message: string;
+  /** EVM calldata steps */
+  evmTx?: { to: string; data: string; value: string; chainId: number };
+  pendingAction?: Omit<CctpBridgeInAction, "message" | "pendingAction"> & {
+    message?: string;
+  };
+  /** Stellar mint step */
+  xdr?: string;
+  networkPassphrase?: string;
+  poolContract?: string;
+};
+
+/**
+ * Prepare EVM → Stellar bridge-in.
+ * Step 1: USDC approve TokenMessengerV2
+ * Step 2: depositForBurnWithHook (mintRecipient=destinationCaller=CctpForwarder)
+ * Step 3 (later): Stellar mint_and_forward after Iris attestation
+ */
+export async function prepareCctpBridgeIn(input: {
+  amount: string;
+  sourceChain?: string;
+  stellarRecipient: string;
+  burnOnly?: boolean;
+}): Promise<CctpBridgeInAction> {
+  const sourceChain = resolveCctpDest(input.sourceChain);
+  const chain = EVM_CCTP[sourceChain];
+  const destMeta = CCTP_DEST_DOMAINS[sourceChain];
+  const recipient = input.stellarRecipient.trim();
+  if (!/^[GMC][A-Z0-9]{55}$/.test(recipient)) {
+    throw new Error("Bridge-in needs a Stellar G… recipient");
+  }
+  const amount = parseUsdcEvm6(input.amount);
+  const human = input.amount.trim();
+
+  const { ethers } = await import("ethers");
+  const forwarderBytes32 = `0x${(await stellarContractToBytes32(CCTP_STELLAR.forwarder)).toString("hex")}`;
+  const hookData = `0x${buildCctpForwarderHookData(recipient).toString("hex")}`;
+  const maxFee = amount / 1000n > 0n ? amount / 1000n : 0n;
+  const minFinality = 2000;
+
+  const erc20 = new ethers.Interface([
+    "function approve(address spender, uint256 amount) returns (bool)",
+  ]);
+  const messenger = new ethers.Interface([
+    "function depositForBurnWithHook(uint256 amount,uint32 destinationDomain,bytes32 mintRecipient,address burnToken,bytes32 destinationCaller,uint256 maxFee,uint32 minFinalityThreshold,bytes hookData) returns (uint64)",
+  ]);
+
+  const approveData = erc20.encodeFunctionData("approve", [chain.tokenMessenger, amount]);
+  const burnData = messenger.encodeFunctionData("depositForBurnWithHook", [
+    amount,
+    CCTP_STELLAR.domain,
+    forwarderBytes32,
+    chain.usdc,
+    forwarderBytes32,
+    maxFee,
+    minFinality,
+    hookData,
+  ]);
+
+  const burnAction: CctpBridgeInAction = {
+    type: "cctp_bridge_in",
+    cctpStep: "evm_burn",
+    sendAmount: human,
+    sendAsset: "USDC",
+    destAsset: "stellar",
+    sourceChain,
+    destination: recipient,
+    sourceDomain: destMeta.domain,
+    destinationDomain: CCTP_STELLAR.domain,
+    chainId: chain.chainId,
+    marketHint: `${chain.label} → Stellar · ${recipient.slice(0, 4)}…${recipient.slice(-4)}`,
+    message: `Confirm again to send **${human} USDC** from **${chain.label}** to Stellar.`,
+    evmTx: {
+      to: chain.tokenMessenger,
+      data: burnData,
+      value: "0x0",
+      chainId: chain.chainId,
+    },
+  };
+
+  if (input.burnOnly) {
+    return burnAction;
+  }
+
+  return {
+    type: "cctp_bridge_in",
+    cctpStep: "evm_approve",
+    sendAmount: human,
+    sendAsset: "USDC",
+    destAsset: "stellar",
+    sourceChain,
+    destination: recipient,
+    sourceDomain: destMeta.domain,
+    destinationDomain: CCTP_STELLAR.domain,
+    chainId: chain.chainId,
+    marketHint: burnAction.marketHint,
+    message: `Bridge **${human} USDC** from **${chain.label}** → **Stellar** (${recipient.slice(0, 4)}…${recipient.slice(-4)}). Connect an EVM wallet, then confirm twice.`,
+    evmTx: {
+      to: chain.usdc,
+      data: approveData,
+      value: "0x0",
+      chainId: chain.chainId,
+    },
+    pendingAction: burnAction,
+  };
+}
+
+/** After EVM burn + Iris attestation → Stellar mint_and_forward XDR. */
+export async function prepareCctpMintAndForward(input: {
+  walletAddress: string;
+  message: string;
+  attestation: string;
+  sourceChain?: string;
+  amount?: string;
+  stellarRecipient?: string;
+}): Promise<CctpBridgeInAction> {
+  if (!input.walletAddress?.startsWith("G")) {
+    throw new Error("Connect a Stellar wallet to finish receiving USDC");
+  }
+  const messageHex = input.message.trim();
+  const attestationHex = input.attestation.trim();
+  if (!messageHex.startsWith("0x") || !attestationHex.startsWith("0x")) {
+    throw new Error("Iris message and attestation must be 0x-prefixed hex");
+  }
+  const messageBytes = Buffer.from(messageHex.slice(2), "hex");
+  const attestationBytes = Buffer.from(attestationHex.slice(2), "hex");
+  const { xdr } = await import("@stellar/stellar-sdk");
+  const built = await buildContractInvoke({
+    sourcePublicKey: input.walletAddress,
+    contractId: CCTP_STELLAR.forwarder,
+    method: "mint_and_forward",
+    args: [xdr.ScVal.scvBytes(messageBytes), xdr.ScVal.scvBytes(attestationBytes)],
+  });
+  const sourceChain = resolveCctpDest(input.sourceChain);
+  const chain = EVM_CCTP[sourceChain];
+  return {
+    type: "cctp_bridge_in",
+    cctpStep: "mint_and_forward",
+    sendAmount: input.amount ?? "",
+    sendAsset: "USDC",
+    destAsset: "stellar",
+    sourceChain,
+    destination: input.stellarRecipient ?? input.walletAddress,
+    sourceDomain: CCTP_DEST_DOMAINS[sourceChain].domain,
+    destinationDomain: CCTP_STELLAR.domain,
+    chainId: chain.chainId,
+    marketHint: `${chain.label} → Stellar`,
+    message: "Sign once more on Stellar to finish receiving your USDC.",
+    xdr: built.xdr,
+    networkPassphrase: built.networkPassphrase || NETWORK_PASSPHRASE,
+    poolContract: CCTP_STELLAR.forwarder,
+  };
+}
+
+/** Iris poll after EVM burn, then optionally build mint XDR. */
+export async function completeCctpBridgeIn(input: {
+  evmTxHash: string;
+  sourceChain?: string;
+  stellarWallet?: string;
+  stellarRecipient?: string;
+  amount?: string;
+}): Promise<{
+  status: "pending" | "complete" | "failed";
+  text: string;
+  message?: string;
+  attestation?: string;
+  action?: CctpBridgeInAction;
+}> {
+  const sourceChain = resolveCctpDest(input.sourceChain);
+  const sourceDomain = CCTP_DEST_DOMAINS[sourceChain].domain;
+  const attest = await fetchCctpAttestation({
+    stellarTxHash: input.evmTxHash,
+    sourceDomain,
+  });
+  if (attest.status === "failed") {
+    return { status: "failed", text: attest.text };
+  }
+  if (attest.status !== "complete" || !attest.message || !attest.attestation) {
+    return {
+      status: "pending",
+      text: "Waiting for confirmation…",
+      message: attest.message,
+      attestation: attest.attestation,
+    };
+  }
+  if (!input.stellarWallet?.startsWith("G")) {
+    return {
+      status: "complete",
+      text: "Almost done — connect Stellar to finish.",
+      message: attest.message,
+      attestation: attest.attestation,
+    };
+  }
+  const action = await prepareCctpMintAndForward({
+    walletAddress: input.stellarWallet,
+    message: attest.message,
+    attestation: attest.attestation,
+    sourceChain,
+    amount: input.amount,
+    stellarRecipient: input.stellarRecipient,
+  });
+  return {
+    status: "complete",
+    text: "Almost done — confirm once more on Stellar.",
+    message: attest.message,
+    attestation: attest.attestation,
+    action,
+  };
 }

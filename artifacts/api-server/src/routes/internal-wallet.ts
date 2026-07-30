@@ -16,11 +16,17 @@ import {
  exportInternalWalletSecret,
  isRecoveryReady,
 } from "../lib/internal-wallet";
+import {
+ ensureInternalEvmWallet,
+ getInternalEvmWallet,
+ signAndSendEvmTx,
+} from "../lib/internal-evm-wallet";
 import { decrypt, deriveUserKey } from "../lib/crypto";
 import { db } from "@workspace/db";
 import { totpSecretsTable, usersTable } from "@workspace/db";
 import { and, eq } from "drizzle-orm";
 import { logger } from "../lib/logger";
+import { resolveCctpDest, getEvmCctpChain } from "../lib/cctp";
 
 const router: IRouter = Router();
 
@@ -165,6 +171,77 @@ router.post(
  logger.error({ err, userId: req.userId }, "Internal wallet export failed");
  res.status(400).json({ error: message });
  }
+ }
+);
+
+/** Orbit embedded EVM address (created on demand for CCTP bridge-in). */
+router.get(
+ "/internal-wallet/evm",
+ async (req: Request & { userId?: number }, res): Promise<void> => {
+  if (!requireAuth(req, res)) return;
+  try {
+   const existing = await getInternalEvmWallet(req.userId!);
+   if (existing) {
+    res.json({ address: existing.address, justCreated: false });
+    return;
+   }
+   const created = await ensureInternalEvmWallet(req.userId!);
+   res.json({
+    address: created.address,
+    deviceShareHex: created.deviceShareHex,
+    justCreated: created.justCreated,
+   });
+  } catch (err: unknown) {
+   logger.error({ err }, "EVM wallet get/create failed");
+   res.status(500).json({
+    error: err instanceof Error ? err.message : "Failed to load EVM wallet",
+   });
+  }
+ }
+);
+
+/** Sign + broadcast an EVM tx with the Orbit secp256k1 key. */
+router.post(
+ "/internal-wallet/evm/send",
+ async (req: Request & { userId?: number }, res): Promise<void> => {
+  if (!requireAuth(req, res)) return;
+  const {
+   deviceShareHex,
+   to,
+   data,
+   value,
+   chainId,
+   destChain,
+  } = req.body as {
+   deviceShareHex?: string;
+   to?: string;
+   data?: string;
+   value?: string;
+   chainId?: number;
+   destChain?: string;
+  };
+  if (!deviceShareHex || !to || !data) {
+   res.status(400).json({ error: "deviceShareHex, to, and data are required" });
+   return;
+  }
+  try {
+   const chain = getEvmCctpChain(resolveCctpDest(destChain));
+   const cid = typeof chainId === "number" ? chainId : chain.chainId;
+   const result = await signAndSendEvmTx({
+    userId: req.userId!,
+    deviceShareHex,
+    chainId: cid,
+    rpcUrl: chain.rpc,
+    to,
+    data,
+    value: value ?? "0",
+   });
+   res.json(result);
+  } catch (err: unknown) {
+   const message = err instanceof Error ? err.message : "EVM send failed";
+   logger.error({ err, userId: req.userId }, "Internal EVM send failed");
+   res.status(400).json({ error: message });
+  }
  }
 );
 

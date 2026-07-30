@@ -150,7 +150,7 @@ async function issueOtp(email: string, purpose: string, emailPurposeLabel: strin
  return code;
 }
 
-async function consumeOtp(email: string, code: string, purpose: string): Promise<boolean> {
+async function findValidOtp(email: string, code: string, purpose: string) {
  const expectedHash = hashOtp(code, email);
  const otpRecord = await db.query.otpCodesTable.findFirst({
  where: and(
@@ -161,9 +161,13 @@ async function consumeOtp(email: string, code: string, purpose: string): Promise
  ),
  orderBy: (t, { desc }) => [desc(t.createdAt)],
  });
+ if (!otpRecord || otpRecord.codeHash !== expectedHash) return null;
+ return otpRecord;
+}
 
- if (!otpRecord || otpRecord.codeHash !== expectedHash) return false;
-
+async function consumeOtp(email: string, code: string, purpose: string): Promise<boolean> {
+ const otpRecord = await findValidOtp(email, code, purpose);
+ if (!otpRecord) return false;
  await db.update(otpCodesTable).set({ used: true }).where(eq(otpCodesTable.id, otpRecord.id));
  return true;
 }
@@ -173,9 +177,22 @@ async function verifyTotpCode(userId: number, code: string): Promise<boolean> {
  where: and(eq(totpSecretsTable.userId, userId), eq(totpSecretsTable.verified, true)),
  });
  if (!totpRow) return false;
+ try {
  const { authenticator } = await import("otplib");
  const secret = decrypt(totpRow.encryptedSecret, deriveUserKey(userId));
  return authenticator.verify({ token: code, secret });
+ } catch (err) {
+ const msg = err instanceof Error ? err.message : String(err);
+ logger.error({ err, userId }, "TOTP decrypt/verify failed");
+ // Decrypt/KMS failures vs unexpected verify errors
+ if (/authenticate|Unsupported state|Invalid ciphertext|KMS_SECRET/i.test(msg)) {
+ throw new Error(
+  "Authenticator data cannot be decrypted (server encryption key may have changed). " +
+   "Use the original device to re-enable authenticator, or contact support."
+ );
+ }
+ return false;
+ }
 }
 
 async function securityPayload(userId: number) {
@@ -597,7 +614,11 @@ router.post("/auth/recover/complete", async (req, res): Promise<void> => {
  }
 
  const normalizedEmail = email.toLowerCase().trim();
- if (!(await consumeOtp(normalizedEmail, code, "recover"))) {
+
+ try {
+ // Validate OTP without consuming yet - so a later failure doesn't burn the email code
+ const otpRecord = await findValidOtp(normalizedEmail, code, "recover");
+ if (!otpRecord) {
  res.status(401).json({ error: "Invalid or expired email code" });
  return;
  }
@@ -610,13 +631,23 @@ router.post("/auth/recover/complete", async (req, res): Promise<void> => {
  return;
  }
 
+ if (!(await isRecoveryReady(user.id))) {
+ res.status(400).json({
+ error: "Recovery is not set up for this account (need verified email + authenticator)",
+ });
+ return;
+ }
+
  if (!(await verifyTotpCode(user.id, totpCode))) {
  res.status(401).json({ error: "Invalid authenticator code" });
  return;
  }
 
- try {
  const recovered = await recoverWithEmailAndTotp(user.id);
+
+ // Only burn the email OTP after wallet restore succeeds
+ await db.update(otpCodesTable).set({ used: true }).where(eq(otpCodesTable.id, otpRecord.id));
+
  const token = await createSession(user.id, req);
  res.cookie(COOKIE_NAME, token, sessionCookieOpts());
 
@@ -630,7 +661,18 @@ router.post("/auth/recover/complete", async (req, res): Promise<void> => {
  });
  } catch (err: unknown) {
  const message = err instanceof Error ? err.message : "Recovery failed";
- logger.error({ err, userId: user.id }, "Recovery failed");
+ logger.error({ err, email: normalizedEmail }, "Recovery failed");
+ // Prefer actionable crypto/KMS messages; avoid bare HTTP 500 for clients
+ if (/KMS_SECRET/i.test(message)) {
+ res.status(500).json({
+ error: "Server wallet encryption is not configured (KMS_SECRET). Contact the site admin.",
+ });
+ return;
+ }
+ if (/encryption key mismatch|authenticate data|Unsupported state|auth/i.test(message)) {
+ res.status(400).json({ error: message });
+ return;
+ }
  res.status(400).json({ error: message });
  }
 });
@@ -1021,11 +1063,17 @@ router.post(
  return;
  }
 
+ try {
  if (!(await verifyTotpCode(req.userId, code))) {
- res.status(401).json({ error: "Invalid TOTP code" });
- return;
+  res.status(401).json({ error: "Invalid TOTP code" });
+  return;
  }
  res.json({ ok: true });
+ } catch (err: unknown) {
+ const message = err instanceof Error ? err.message : "TOTP validation failed";
+ logger.error({ err, userId: req.userId }, "TOTP validate failed");
+ res.status(400).json({ error: message });
+ }
  }
 );
 

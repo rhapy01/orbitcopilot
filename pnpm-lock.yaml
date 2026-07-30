@@ -351,6 +351,9 @@ importers:
       '@vercel/analytics':
         specifier: ^2.0.1
         version: 2.0.1(react@19.1.0)
+      ethers:
+        specifier: '6'
+        version: 6.17.0
       jszip:
         specifier: ^3.10.1
         version: 3.10.1

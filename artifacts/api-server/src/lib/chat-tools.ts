@@ -112,7 +112,7 @@ export const CAPABILITIES_TEXT = [
  "Lending: Blend supply / withdraw / borrow / repay / claim rewards (Circle USDC + XLM)",
  "Vaults: DeFindex (XLM/USDC/CETES) · Meridian (Blend USDC)",
  "Orbit Supply: deposit USDC / pUSDC / EURC → claim XLM yield every 24h (10 XLM per 1M)",
- "Bridge: Circle CCTP — burn USDC on Stellar Testnet → mint on Base/Eth/Arb/OP Sepolia",
+ "Bridge: Circle CCTP — native USDC between Stellar Testnet and Base/Eth/Arb/OP/Arc",
  "NFTs: mint (attach artwork), list for XLM, buy, transfer",
  "",
  "── LEARN ──",

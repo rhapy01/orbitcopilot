@@ -5,6 +5,7 @@
 
 import { useEffect, useState } from "react";
 import { useWallet } from "@/hooks/use-wallet";
+import { useEvmWallet } from "@/hooks/use-evm-wallet";
 import {
  Dialog,
  DialogContent,
@@ -50,6 +51,7 @@ interface WalletConnectModalProps {
 
 export function WalletConnectModal({ open, onOpenChange }: WalletConnectModalProps) {
  const wallet = useWallet();
+ const evm = useEvmWallet();
 
  const [step, setStep] = useState<Step>("choose");
  const [email, setEmail] = useState("");
@@ -217,6 +219,40 @@ export function WalletConnectModal({ open, onOpenChange }: WalletConnectModalPro
  ? err.message
  : "Connection failed"
  : "Freighter not found - install from freighter.app"
+ );
+ } finally {
+ setLoading(false);
+ }
+ }
+
+ async function handleMetaMask() {
+ setError(null);
+ setLoading(true);
+ try {
+ await evm.connectInjected();
+ handleClose(false);
+ } catch (err) {
+ setError(
+ err instanceof Error
+ ? err.message
+ : "MetaMask / browser wallet connection failed"
+ );
+ } finally {
+ setLoading(false);
+ }
+ }
+
+ async function handleOrbitEvm() {
+ setError(null);
+ setLoading(true);
+ try {
+ await evm.ensureOrbitEvm();
+ handleClose(false);
+ } catch (err) {
+ setError(
+ err instanceof Error
+ ? err.message
+ : "Could not create Orbit EVM key — sign in with email/passkey first"
  );
  } finally {
  setLoading(false);
@@ -421,6 +457,36 @@ export function WalletConnectModal({ open, onOpenChange }: WalletConnectModalPro
  {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Wallet className="w-4 h-4 mr-2" />}
  Connect Freighter
  </Button>
+
+ <div className="flex items-center gap-3">
+ <div className="flex-1 h-px bg-[#1e2236]" />
+ <span className="text-xs text-slate-500">EVM (bridge-in)</span>
+ <div className="flex-1 h-px bg-[#1e2236]" />
+ </div>
+
+ <Button
+ variant="outline"
+ className="w-full border-[#2a2d3e] text-slate-300 hover:bg-[#1a1d2e]"
+ onClick={handleMetaMask}
+ disabled={loading}
+ >
+ {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Wallet className="w-4 h-4 mr-2" />}
+ Connect MetaMask / browser wallet
+ </Button>
+ <Button
+ variant="outline"
+ className="w-full border-[#2a2d3e] text-slate-300 hover:bg-[#1a1d2e]"
+ onClick={handleOrbitEvm}
+ disabled={loading}
+ >
+ {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <KeyRound className="w-4 h-4 mr-2" />}
+ Create / use Orbit EVM key
+ </Button>
+ {evm.evmAddress && (
+ <p className="text-[11px] text-emerald-400/90 text-center">
+ EVM connected: {evm.evmAddress.slice(0, 6)}…{evm.evmAddress.slice(-4)} ({evm.evmKind})
+ </p>
+ )}
  </div>
 
  {error && (

@@ -6,6 +6,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/components/theme-provider";
 import { WalletProvider } from "@/hooks/use-wallet";
+import { EvmWalletProvider } from "@/hooks/use-evm-wallet";
 import { track } from "@/lib/analytics";
 import ChatPage from "@/pages/chat";
 import StatsPage from "@/pages/stats";
@@ -32,6 +33,7 @@ function App() {
   return (
     <ThemeProvider defaultTheme="light" storageKey="orbit-theme">
       <WalletProvider>
+        <EvmWalletProvider>
         <QueryClientProvider client={queryClient}>
           <TooltipProvider>
             <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
@@ -41,6 +43,7 @@ function App() {
             <Analytics />
           </TooltipProvider>
         </QueryClientProvider>
+        </EvmWalletProvider>
       </WalletProvider>
     </ThemeProvider>
   );

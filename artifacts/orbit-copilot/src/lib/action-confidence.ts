@@ -70,6 +70,8 @@ export function outcomeSummary(action: ChatAction): string {
  ? `Sent ${action.sendAmount ?? ""} ${action.sendAsset ?? ""}`
  : action.type === "cctp_bridge"
  ? `Bridged ${action.sendAmount ?? ""} USDC → ${action.destAsset ?? "Base"}`
+ : action.type === "cctp_bridge_in"
+ ? `Bridged ${action.sendAmount ?? ""} USDC → Stellar`
  : action.type.includes("swap")
  ? `Swapped ${action.sendAmount ?? ""} ${action.sendAsset ?? ""} → ${action.destAsset ?? ""}`
  : action.type.includes("liquidity")
@@ -90,6 +92,9 @@ export function outcomeSummary(action: ChatAction): string {
  }
  if (action.type === "cctp_bridge") {
  return `Bridged ${action.sendAmount ?? ""} USDC → ${action.destAsset ?? "Base"}`.trim();
+ }
+ if (action.type === "cctp_bridge_in") {
+ return `Bridged ${action.sendAmount ?? ""} USDC → Stellar`.trim();
  }
  return `${title.trim()} - confirmed on Stellar Testnet`;
 }

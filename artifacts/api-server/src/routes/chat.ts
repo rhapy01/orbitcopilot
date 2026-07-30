@@ -213,6 +213,7 @@ import {
   fetchCctpAttestation,
   formatCctpHelp,
   prepareCctpBridge,
+  prepareCctpBridgeIn,
   resolveCctpDest,
 } from "../lib/cctp";
 
@@ -317,15 +318,42 @@ const MERIDIAN_DEPOSIT_RE =
 const MERIDIAN_WITHDRAW_RE =
   /\bwithdraw\s+([\d.]+)\s*(?:usdc|musdc|shares?)?\b(?:.*?\b(?:from|on)\b.*?\bmeridian\b|\s+meridian\b)|\bmeridian\b.*?\bwithdraw\s+([\d.]+)/i;
 
-// Circle CCTP: "bridge 1 USDC to base sepolia 0x…" / "cctp 2 usdc to ethereum 0x…"
-const CCTP_BRIDGE_RE =
-  /\b(?:bridge|cctp)\s+([\d.]+)\s*usdc\b(?:.*?\b(?:to|onto|on)\b\s*)?(?:(base|ethereum|eth|arbitrum|arb|optimism|op|arc)(?:\s+(?:sepolia|testnet))?)?\s*(0x[a-fA-F0-9]{40})\b/i;
+// Circle CCTP: "bridge 1 USDC to base sepolia 0x…" / "bridge in 10 USDC from arc to G…"
+const CCTP_AMT =
+  String.raw`\b(?:bridge(?:\s+in(?:to)?)?|cctp)\s+([\d.]+)\s*usdc\b`;
+const CCTP_CHAIN =
+  String.raw`(base|ethereum|eth|arbitrum|arb|optimism|op|arc)(?:\s+(?:sepolia|testnet))?`;
+const CCTP_BRIDGE_RE = new RegExp(
+  CCTP_AMT +
+    String.raw`(?:.*?\b(?:to|onto|on)\b\s*)?(?:` +
+    CCTP_CHAIN +
+    String.raw`)?\s*(0x[a-fA-F0-9]{40})\b`,
+  "i"
+);
 /** Amount + USDC + optional chain, but missing 0x destination. */
-const CCTP_INCOMPLETE_RE =
-  /\b(?:bridge|cctp)\s+([\d.]+)\s*usdc\b(?:.*?\b(?:to|onto|on)\b\s*(base|ethereum|eth|arbitrum|arb|optimism|op|arc)(?:\s+(?:sepolia|testnet))?)?/i;
+const CCTP_INCOMPLETE_RE = new RegExp(
+  CCTP_AMT +
+    String.raw`(?:.*?\b(?:to|onto|on)\b\s*` +
+    CCTP_CHAIN +
+    String.raw`)?`,
+  "i"
+);
+/** EVM → Stellar: bridge in 1 USDC from arc to stellar G… */
+const CCTP_BRIDGE_IN_RE = new RegExp(
+  CCTP_AMT +
+    String.raw`.*?\bfrom\b\s*` +
+    CCTP_CHAIN +
+    String.raw`\s*(?:.*?\b(?:to|onto|on)\b\s*)?(?:stellar(?:\s+testnet)?\s+)?([GMC][A-Z0-9]{55})\b`,
+  "i"
+);
+const CCTP_BRIDGE_IN_INCOMPLETE_RE = new RegExp(
+  CCTP_AMT + String.raw`.*?\bfrom\b\s*` + CCTP_CHAIN,
+  "i"
+);
 const CCTP_ATTEST_RE =
   /\b(?:cctp\s+)?attest(?:ation)?\b.*?\b([a-f0-9]{64})\b/i;
 const EVM_ADDRESS_RE = /\b(0x[a-fA-F0-9]{40})\b/;
+const STELLAR_ADDR_RE = /\b([GMC][A-Z0-9]{55})\b/;
 
 type ChatReply = {
  text: string;
@@ -454,6 +482,7 @@ interface ChatAction {
     | "meridian_deposit"
     | "meridian_withdraw"
     | "cctp_bridge"
+    | "cctp_bridge_in"
     | "aquarius_swap"
  | "connect_wallet"
  | "add_trustline";
@@ -491,8 +520,11 @@ interface ChatAction {
  xdr?: string;
  networkPassphrase?: string;
  pendingAction?: ChatAction;
- /** CCTP: approve USDC first, then burn (single-op each). */
- cctpStep?: "approve" | "burn";
+ /** CCTP out / in steps */
+ cctpStep?: "approve" | "burn" | "evm_approve" | "evm_burn" | "mint_and_forward";
+ sourceChain?: string;
+ chainId?: number;
+ evmTx?: { to: string; data: string; value: string; chainId: number };
  sendAmount?: string;
  sendAsset?: string;
  destination?: string;
@@ -2784,12 +2816,14 @@ async function getDeterministicResponse(
   }
 }
 
-// Circle CCTP — bridge USDC Stellar → EVM testnets
+// Circle CCTP — bridge USDC Stellar ↔ EVM testnets
 {
   if (
     /\b(?:cctp|circle\s+cctp|bridge)\b/i.test(content) &&
     !CCTP_BRIDGE_RE.test(content) &&
+    !CCTP_BRIDGE_IN_RE.test(content) &&
     !CCTP_INCOMPLETE_RE.test(content) &&
+    !CCTP_BRIDGE_IN_INCOMPLETE_RE.test(content) &&
     !CCTP_ATTEST_RE.test(content)
   ) {
     return { text: formatCctpHelp(), action: null };
@@ -2803,6 +2837,81 @@ async function getDeterministicResponse(
     } catch (err: any) {
       return { text: err?.message ?? "Attestation lookup failed", action: null };
     }
+  }
+
+  // Bridge-in before outbound so "from arc to stellar G…" isn't mishandled
+  const cctpBridgeIn = content.match(CCTP_BRIDGE_IN_RE);
+  if (cctpBridgeIn) {
+    const amount = cctpBridgeIn[1]!;
+    const sourceChain = resolveCctpDest(cctpBridgeIn[2] || "arc");
+    const stellarRecipient = cctpBridgeIn[3]!;
+    try {
+      const prepared = await prepareCctpBridgeIn({
+        amount,
+        sourceChain,
+        stellarRecipient,
+      });
+      return {
+        text: prepared.message,
+        action: {
+          type: "cctp_bridge_in",
+          sendAmount: prepared.sendAmount,
+          sendAsset: "USDC",
+          destAsset: "stellar",
+          destination: prepared.destination,
+          marketHint: prepared.marketHint,
+          cctpStep: prepared.cctpStep,
+          sourceChain: prepared.sourceChain,
+          chainId: prepared.chainId,
+          evmTx: prepared.evmTx,
+          ...(prepared.pendingAction
+            ? { pendingAction: prepared.pendingAction as ChatAction }
+            : {}),
+        } as ChatAction,
+      };
+    } catch (err: any) {
+      return { text: err?.message ?? "Could not prepare CCTP bridge-in", action: null };
+    }
+  }
+
+  const cctpBridgeInIncomplete = content.match(CCTP_BRIDGE_IN_INCOMPLETE_RE);
+  if (cctpBridgeInIncomplete && !STELLAR_ADDR_RE.test(content)) {
+    const amount = cctpBridgeInIncomplete[1]!;
+    const sourceChain = resolveCctpDest(cctpBridgeInIncomplete[2] || "arc");
+    // Auto-use connected Stellar wallet as mint recipient when available
+    if (publicKey?.startsWith("G")) {
+      try {
+        const prepared = await prepareCctpBridgeIn({
+          amount,
+          sourceChain,
+          stellarRecipient: publicKey,
+        });
+        return {
+          text: prepared.message,
+          action: {
+            type: "cctp_bridge_in",
+            sendAmount: prepared.sendAmount,
+            sendAsset: "USDC",
+            destAsset: "stellar",
+            destination: prepared.destination,
+            marketHint: prepared.marketHint,
+            cctpStep: prepared.cctpStep,
+            sourceChain: prepared.sourceChain,
+            chainId: prepared.chainId,
+            evmTx: prepared.evmTx,
+            ...(prepared.pendingAction
+              ? { pendingAction: prepared.pendingAction as ChatAction }
+              : {}),
+          } as ChatAction,
+        };
+      } catch (err: any) {
+        return { text: err?.message ?? "Could not prepare CCTP bridge-in", action: null };
+      }
+    }
+    return {
+      text: `Bridge-in **${amount} USDC** from **${sourceChain}** → Stellar needs a recipient.\n\nConnect your Stellar wallet, or reply with a \`G…\` address.`,
+      action: null,
+    };
   }
 
   const cctpBridge = content.match(CCTP_BRIDGE_RE);
@@ -2843,7 +2952,7 @@ async function getDeterministicResponse(
 
   // Incomplete: amount known, missing 0x → ask for EVM address (don't dead-end)
   const cctpIncomplete = content.match(CCTP_INCOMPLETE_RE);
-  if (cctpIncomplete && !EVM_ADDRESS_RE.test(content)) {
+  if (cctpIncomplete && !EVM_ADDRESS_RE.test(content) && !/\bfrom\b/i.test(content)) {
     const amount = cctpIncomplete[1]!;
     const destChain = resolveCctpDest(cctpIncomplete[2] || "base");
     const key = pendingActionKey(publicKey, sessionId);

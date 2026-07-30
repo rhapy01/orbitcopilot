@@ -13,6 +13,7 @@ import { useBuildTransaction, useSubmitTransaction } from "@workspace/api-client
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useWallet } from "@/hooks/use-wallet";
+import { useEvmWallet } from "@/hooks/use-evm-wallet";
 import {
  STELDEX_FULL_RANGE,
  STELDEX_NETWORK_PASSPHRASE,
@@ -109,6 +110,7 @@ export interface ChatAction {
     | "meridian_deposit"
     | "meridian_withdraw"
     | "cctp_bridge"
+    | "cctp_bridge_in"
     | "aquarius_swap"
  | "connect_wallet"
  | "add_trustline";
@@ -175,8 +177,16 @@ export interface ChatAction {
  networkPassphrase?: string;
  /** For add_trustline / CCTP approve: next action after this step */
  pendingAction?: ChatAction;
- /** CCTP: approve then burn (single-op each) */
- cctpStep?: "approve" | "burn";
+ /** CCTP out: approve then burn; CCTP in: evm_approve → evm_burn → mint_and_forward */
+ cctpStep?: "approve" | "burn" | "evm_approve" | "evm_burn" | "mint_and_forward";
+ /** Bridge-in source chain (arc/base/…) */
+ sourceChain?: string;
+ chainId?: number;
+ /** Prepared EVM calldata for bridge-in */
+ evmTx?: { to: string; data: string; value: string; chainId: number };
+ /** Iris payload for mint_and_forward */
+ irisMessage?: string;
+ irisAttestation?: string;
 }
 
 const MEDIA_MAX_BYTES = 8 * 1024 * 1024;
@@ -651,21 +661,29 @@ function isOrbitNativeAction(type: ChatAction["type"]) {
 
 /** Resolve CCTP dest from destAsset and/or marketHint (e.g. "Arc Testnet · 0x…"). */
 function resolveCctpDestClient(destAsset?: string, marketHint?: string): string {
+  const d = (destAsset ?? "").trim().toLowerCase();
+  // Prefer explicit destAsset — marketHint often contains both source and dest names.
+  if (d === "stellar") return "stellar";
+  if (d === "arc" || d === "arbitrum" || d === "optimism" || d === "ethereum" || d === "base") {
+    return d;
+  }
   const raw = `${destAsset ?? ""} ${marketHint ?? ""}`.trim().toLowerCase();
+  // Bridge-in hints look like "Arc Testnet → Stellar" — prefer destination side.
+  if (/\b→\s*stellar\b|\bto\s+stellar\b/.test(raw) || /\bstellar\b/.test(d)) {
+    return "stellar";
+  }
   if (/\barc\b/.test(raw)) return "arc";
   if (/\barbitrum\b/.test(raw) || /(^|\s)arb(\s|$)/.test(raw)) return "arbitrum";
   if (/\boptimism\b/.test(raw) || /(^|\s)op(\s|$)/.test(raw)) return "optimism";
   if (/\bethereum\b/.test(raw) || /(^|\s)eth(\s|$)/.test(raw)) return "ethereum";
   if (/\bbase\b/.test(raw)) return "base";
-  const d = (destAsset ?? "").trim().toLowerCase();
-  if (d === "arc" || d === "arbitrum" || d === "optimism" || d === "ethereum" || d === "base") {
-    return d;
-  }
   return "base";
 }
 
 function cctpDestLabel(destAsset?: string, marketHint?: string): string {
   switch (resolveCctpDestClient(destAsset, marketHint)) {
+    case "stellar":
+      return "Stellar Testnet";
     case "ethereum":
       return "Ethereum Sepolia";
     case "arbitrum":
@@ -681,6 +699,8 @@ function cctpDestLabel(destAsset?: string, marketHint?: string): string {
 
 function cctpDestShortLabel(destAsset?: string, marketHint?: string): string {
   switch (resolveCctpDestClient(destAsset, marketHint)) {
+    case "stellar":
+      return "Stellar";
     case "ethereum":
       return "Ethereum";
     case "arbitrum":
@@ -720,8 +740,16 @@ function truncateAddr(addr: string): string {
  return `${a.slice(0, 6)}…${a.slice(-4)}`;
 }
 
+function isCctpBridgeOut(action: ChatAction): boolean {
+ return action.type === "cctp_bridge";
+}
+
+function isCctpBridgeIn(action: ChatAction): boolean {
+ return action.type === "cctp_bridge_in";
+}
+
 function isCctpBridgeAction(action: ChatAction): boolean {
- return action.type === "cctp_bridge" || action.cctpStep != null;
+ return isCctpBridgeOut(action) || isCctpBridgeIn(action);
 }
 
 function actionTitle(action: ChatAction): string {
@@ -804,6 +832,14 @@ function actionTitle(action: ChatAction): string {
         : action.cctpStep === "burn"
           ? "Bridge USDC · 2 of 2"
           : "Bridge USDC";
+    case "cctp_bridge_in":
+      return action.cctpStep === "evm_approve"
+        ? "Bridge in · 1 of 3"
+        : action.cctpStep === "evm_burn"
+          ? "Bridge in · 2 of 3"
+          : action.cctpStep === "mint_and_forward"
+            ? "Bridge in · 3 of 3"
+            : "Bridge in USDC";
     case "steldex_swap":
  return "StelDex Swap";
  case "steldex_add_liquidity":
@@ -1006,6 +1042,8 @@ export function TransactionActionCard({
  onContinue?: (prompt: string) => void;
 }) {
  const { isConnected, publicKey, openConnectModal, connecting, signTransaction, type: walletType } = useWallet();
+ const { evmAddress, evmConnecting, sendEvmTx, ensureOrbitEvm, connectInjected, hasInjectedProvider } =
+  useEvmWallet();
  const buildMutation = useBuildTransaction();
  const submitMutation = useSubmitTransaction();
 
@@ -1059,9 +1097,9 @@ export function TransactionActionCard({
  setOutcomeLine(initialCompleted.summary);
  }, [initialCompleted]);
 
- // Keep resolving destination mint tx after Stellar success (swap-like card stays up).
+ // Keep resolving destination mint tx after Stellar→EVM success only.
  useEffect(() => {
-  if (!isCctpBridgeAction(action)) return;
+  if (!isCctpBridgeOut(action)) return;
   if (!(status === "success" || actionComplete)) return;
   if (!hash || cctpDestTxHash) return;
   let cancelled = false;
@@ -1423,6 +1461,151 @@ export function TransactionActionCard({
  return;
  }
 
+ // CCTP bridge-in: EVM approve → EVM burn → Stellar mint_and_forward
+ if (action.type === "cctp_bridge_in") {
+  if (action.cctpStep === "mint_and_forward") {
+   if (!publicKey) {
+    openConnectModal();
+    return;
+   }
+   setProgress("Refreshing transfer…");
+   const mintRes = await fetch("/api/cctp/bridge-in/mint", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+     walletAddress: publicKey,
+     message: action.irisMessage,
+     attestation: action.irisAttestation,
+     sourceChain: action.sourceChain ?? "arc",
+     amount: action.sendAmount,
+     stellarRecipient: action.destination,
+    }),
+   });
+   // Prefer XDR already on action after complete poll
+   let xdr = action.xdr;
+   let passphrase = action.networkPassphrase;
+   if (!xdr) {
+    const md = await mintRes.json().catch(() => ({}));
+    if (!mintRes.ok || !md.xdr) {
+     throw new Error(md.error || "Could not prepare the final transfer");
+    }
+    xdr = md.xdr;
+    passphrase = md.networkPassphrase;
+    setAction((prev) => ({ ...prev, xdr, networkPassphrase: passphrase }));
+   } else if (!action.irisMessage) {
+    /* xdr already present from complete */
+   } else if (!mintRes.ok && !xdr) {
+    const md = await mintRes.json().catch(() => ({}));
+    throw new Error(md.error || "Could not prepare the final transfer");
+   }
+   setStatus("signing");
+   setProgress("Confirm in your Stellar wallet…");
+   const signedXdr = await signTransaction(
+    xdr!,
+    passphrase || STELLAR_NETWORK_PASSPHRASE || STELDEX_NETWORK_PASSPHRASE
+   );
+   setStatus("submitting");
+   setProgress("Finishing transfer…");
+   const { submitSignedToSoroban } = await import("@/lib/steldex-submit");
+   const txHash = await submitSignedToSoroban(signedXdr);
+   setHash(txHash);
+   setStatus("success");
+   setActionComplete(true);
+   return;
+  }
+
+  // EVM approve or burn
+  if (!action.evmTx) throw new Error("Missing EVM transaction data");
+  if (!evmAddress) {
+   if (hasInjectedProvider) {
+    setProgress("Connect MetaMask…");
+    await connectInjected();
+   } else {
+    setProgress("Creating Orbit EVM key…");
+    await ensureOrbitEvm();
+   }
+  }
+  setStatus("signing");
+    setProgress(
+   action.cctpStep === "evm_approve"
+    ? "Confirm step 1 in your wallet…"
+    : "Confirm step 2 in your wallet…"
+  );
+  const txHash = await sendEvmTx(action.evmTx, {
+   sourceChain: action.sourceChain,
+  });
+  setHash(txHash);
+
+  if (action.cctpStep === "evm_approve" && action.pendingAction) {
+   setProgress("Approved — preparing next step…");
+   await new Promise((r) => setTimeout(r, 2500));
+   const next = action.pendingAction;
+   setAction({
+    ...next,
+    type: "cctp_bridge_in",
+    cctpStep: "evm_burn",
+    sendAmount: next.sendAmount ?? action.sendAmount,
+    destination: next.destination ?? action.destination,
+    sourceChain: next.sourceChain ?? action.sourceChain,
+    chainId: next.chainId ?? action.chainId,
+    marketHint: next.marketHint ?? action.marketHint,
+    evmTx: next.evmTx,
+   });
+   setStatus("idle");
+   setHash(null);
+   setError(null);
+   setProgress(null);
+   return;
+  }
+
+  // After burn: poll Iris then advance to mint_and_forward
+  setStatus("submitting");
+  setProgress("Confirming across chains…");
+  let mintAction: ChatAction | null = null;
+  for (let i = 0; i < 36; i++) {
+   await new Promise((r) => setTimeout(r, i === 0 ? 4000 : 5000));
+   try {
+    const ar = await fetch("/api/cctp/bridge-in/complete", {
+     method: "POST",
+     headers: { "Content-Type": "application/json" },
+     body: JSON.stringify({
+      txHash,
+      sourceChain: action.sourceChain ?? "arc",
+      walletAddress: publicKey,
+      stellarRecipient: action.destination,
+      amount: action.sendAmount,
+     }),
+    });
+    const ad = await ar.json().catch(() => ({}));
+    if (ad?.status === "complete" && ad?.action?.xdr) {
+     mintAction = {
+      ...ad.action,
+      type: "cctp_bridge_in",
+      cctpStep: "mint_and_forward",
+      irisMessage: ad.message,
+      irisAttestation: ad.attestation,
+     } as ChatAction;
+     break;
+    }
+    if (ad?.status === "failed") {
+     throw new Error(ad.text || "Transfer confirmation failed");
+    }
+   } catch (err) {
+    if (i > 30) throw err;
+   }
+  }
+  if (!mintAction) {
+   throw new Error(
+    "Still confirming — try again in a minute with the same bridge, or share your tx hash in chat"
+   );
+  }
+  setAction(mintAction);
+  setStatus("idle");
+  setHash(null);
+  setProgress(null);
+  return;
+ }
+
  // CCTP step 1/2: approve USDC spend, then continue to burn card
  if (action.type === "cctp_bridge" && action.cctpStep === "approve") {
   setProgress("Refreshing USDC approve…");
@@ -1442,7 +1625,7 @@ export function TransactionActionCard({
  setEstimatedDest(rebuilt.estimatedDestAmount);
  }
  setStatus("signing");
- setProgress("Sign to approve CCTP…");
+ setProgress("Sign to allow the transfer…");
   const signedXdr = await signTransaction(
    rebuilt.xdr,
    rebuilt.networkPassphrase ||
@@ -1451,14 +1634,14 @@ export function TransactionActionCard({
     STELDEX_NETWORK_PASSPHRASE
   );
   setStatus("submitting");
-  setProgress("Submitting approve…");
+  setProgress("Submitting…");
   const { submitSignedToSoroban } = await import("@/lib/steldex-submit");
   const txHash = await submitSignedToSoroban(signedXdr);
   setHash(txHash);
   if (action.pendingAction) {
    const next = action.pendingAction;
    const amt = action.sendAmount ?? next.sendAmount ?? "";
-   setProgress("Confirming USDC allowance…");
+   setProgress("Confirming…");
    for (let i = 0; i < 12; i++) {
     await new Promise((r) => setTimeout(r, i === 0 ? 1500 : 2000));
     try {
@@ -2521,6 +2704,13 @@ export function TransactionActionCard({
     {cctpDestLabel(action.destAsset, action.marketHint)} · {truncateAddr(action.destination)}
    </span>
   </div>
+ ) : action.type === "cctp_bridge_in" && action.destination ? (
+  <div className="flex justify-between gap-2 min-w-0">
+   <span className="shrink-0">To</span>
+   <span className="font-medium text-foreground text-right truncate min-w-0" title={action.destination}>
+    Stellar · {truncateAddr(action.destination)}
+   </span>
+  </div>
  ) : (
   <>
    <div className="flex justify-between">
@@ -2586,7 +2776,10 @@ export function TransactionActionCard({
  </div>
  {isCctpBridgeAction(action) ? (
   <p className="text-sm text-foreground">
-   Bridged {action.sendAmount} USDC → {cctpDestLabel(action.destAsset, action.marketHint)}
+   Bridged {action.sendAmount} USDC →{" "}
+   {isCctpBridgeIn(action)
+    ? "Stellar Testnet"
+    : cctpDestLabel(action.destAsset, action.marketHint)}
    {action.destination ? ` (${truncateAddr(action.destination)})` : ""}
   </p>
  ) : (
@@ -2622,7 +2815,20 @@ export function TransactionActionCard({
  );
  })}
  </ul>
- ) : isCctpBridgeAction(action) ? (
+ ) : isCctpBridgeIn(action) ? (
+  <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+   {hash && (
+    <a
+     href={`https://stellar.expert/explorer/testnet/tx/${hash}`}
+     target="_blank"
+     rel="noreferrer"
+     className="text-xs text-primary flex items-center gap-1 hover:underline"
+    >
+     Stellar <ExternalLink className="w-3 h-3" />
+    </a>
+   )}
+  </div>
+ ) : isCctpBridgeOut(action) ? (
   <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
    {hash && (
     <a
@@ -2683,19 +2889,31 @@ export function TransactionActionCard({
  {error && isTxTooLateError(error) ? "Refresh & try again" : "Try again"}
  </Button>
  </div>
- ) : !isConnected ? (
+ ) : !isConnected &&
+  !(action.type === "cctp_bridge_in" && action.cctpStep !== "mint_and_forward") ? (
+ <Button
+ size="sm"
+ className="w-full rounded-xl bg-orbit-gradient text-white border-0 hover:opacity-90"
+ onClick={openConnectModal}
+ disabled={connecting || evmConnecting}
+ >
+ {connecting || evmConnecting ? (
+ <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+ ) : (
+ <Wallet className="w-4 h-4 mr-1" />
+ )}
+ Connect wallet
+ </Button>
+ ) : action.type === "cctp_bridge_in" &&
+  action.cctpStep === "mint_and_forward" &&
+  !isConnected ? (
  <Button
  size="sm"
  className="w-full rounded-xl bg-orbit-gradient text-white border-0 hover:opacity-90"
  onClick={openConnectModal}
  disabled={connecting}
  >
- {connecting ? (
- <Loader2 className="w-4 h-4 mr-1 animate-spin" />
- ) : (
- <Wallet className="w-4 h-4 mr-1" />
- )}
- Connect wallet
+ Connect Stellar to finish
  </Button>
  ) : (
  <div className="space-y-2">
@@ -2722,6 +2940,12 @@ export function TransactionActionCard({
  ? "Confirm (1 of 2)"
  : action.type === "cctp_bridge"
  ? "Confirm (2 of 2)"
+ : action.type === "cctp_bridge_in" && action.cctpStep === "evm_approve"
+ ? "Confirm (1 of 3)"
+ : action.type === "cctp_bridge_in" && action.cctpStep === "evm_burn"
+ ? "Confirm (2 of 3)"
+ : action.type === "cctp_bridge_in" && action.cctpStep === "mint_and_forward"
+ ? "Confirm (3 of 3)"
  : walletType === "internal"
  ? "Sign with Orbit wallet"
  : "Sign with Freighter"}

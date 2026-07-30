@@ -1,11 +1,14 @@
 import { Router, type IRouter } from "express";
 import {
+  completeCctpBridgeIn,
   completeCctpDestination,
   fetchCctpAttestation,
   formatCctpHelp,
   getCctpAllowanceStatus,
   prepareCctpApprove,
   prepareCctpBridge,
+  prepareCctpBridgeIn,
+  prepareCctpMintAndForward,
   resolveCctpDest,
 } from "../lib/cctp";
 
@@ -183,6 +186,115 @@ router.post("/cctp/complete", async (req, res): Promise<void> => {
     res.json(result);
   } catch (err: any) {
     res.status(502).json({ error: err?.message ?? "CCTP complete failed" });
+  }
+});
+
+/** EVM → Stellar: prepare approve or burn calldata. */
+router.post("/cctp/bridge-in", async (req, res): Promise<void> => {
+  const amount =
+    typeof req.body?.amount === "string"
+      ? req.body.amount.trim()
+      : typeof req.body?.sendAmount === "string"
+        ? req.body.sendAmount.trim()
+        : "";
+  const stellarRecipient =
+    typeof req.body?.stellarRecipient === "string"
+      ? req.body.stellarRecipient.trim()
+      : typeof req.body?.destination === "string"
+        ? req.body.destination.trim()
+        : "";
+  const sourceChain =
+    typeof req.body?.sourceChain === "string"
+      ? req.body.sourceChain
+      : typeof req.body?.destAsset === "string"
+        ? req.body.destAsset
+        : typeof req.body?.marketHint === "string"
+          ? req.body.marketHint
+          : "arc";
+  const burnOnly = Boolean(req.body?.burnOnly);
+  if (!amount || !stellarRecipient) {
+    res.status(400).json({ error: "amount and stellarRecipient (G…) required" });
+    return;
+  }
+  try {
+    const result = await prepareCctpBridgeIn({
+      amount,
+      sourceChain: resolveCctpDest(sourceChain),
+      stellarRecipient,
+      burnOnly,
+    });
+    res.status(201).json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err?.message ?? "CCTP bridge-in prepare failed" });
+  }
+});
+
+/** After Iris attestation: build Stellar mint_and_forward XDR. */
+router.post("/cctp/bridge-in/mint", async (req, res): Promise<void> => {
+  const walletAddress =
+    typeof req.body?.walletAddress === "string" ? req.body.walletAddress.trim() : "";
+  const message = typeof req.body?.message === "string" ? req.body.message.trim() : "";
+  const attestation =
+    typeof req.body?.attestation === "string" ? req.body.attestation.trim() : "";
+  const sourceChain =
+    typeof req.body?.sourceChain === "string" ? req.body.sourceChain : "arc";
+  if (!walletAddress || !message || !attestation) {
+    res.status(400).json({ error: "walletAddress, message, and attestation required" });
+    return;
+  }
+  try {
+    const result = await prepareCctpMintAndForward({
+      walletAddress,
+      message,
+      attestation,
+      sourceChain: resolveCctpDest(sourceChain),
+      amount: typeof req.body?.amount === "string" ? req.body.amount : undefined,
+      stellarRecipient:
+        typeof req.body?.stellarRecipient === "string"
+          ? req.body.stellarRecipient
+          : undefined,
+    });
+    res.status(201).json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err?.message ?? "mint_and_forward prepare failed" });
+  }
+});
+
+/** Poll Iris for EVM burn, then return mint action when ready. */
+router.post("/cctp/bridge-in/complete", async (req, res): Promise<void> => {
+  const txHash =
+    typeof req.body?.txHash === "string"
+      ? req.body.txHash.trim()
+      : typeof req.body?.hash === "string"
+        ? req.body.hash.trim()
+        : "";
+  const sourceChain =
+    typeof req.body?.sourceChain === "string"
+      ? req.body.sourceChain
+      : typeof req.body?.destAsset === "string"
+        ? req.body.destAsset
+        : "arc";
+  if (!txHash) {
+    res.status(400).json({ error: "txHash required" });
+    return;
+  }
+  try {
+    const result = await completeCctpBridgeIn({
+      evmTxHash: txHash,
+      sourceChain: resolveCctpDest(sourceChain),
+      stellarWallet:
+        typeof req.body?.walletAddress === "string"
+          ? req.body.walletAddress.trim()
+          : undefined,
+      stellarRecipient:
+        typeof req.body?.stellarRecipient === "string"
+          ? req.body.stellarRecipient.trim()
+          : undefined,
+      amount: typeof req.body?.amount === "string" ? req.body.amount : undefined,
+    });
+    res.json(result);
+  } catch (err: any) {
+    res.status(502).json({ error: err?.message ?? "CCTP bridge-in complete failed" });
   }
 });
 

@@ -208,7 +208,7 @@ export const PROTOCOL_REGISTRY: ProtocolInfo[] = [
  capabilities: ["usdc-bridge-out", "attestation"],
  docs: "https://developers.circle.com/cctp/references/stellar-contracts",
  notes:
- "Burn Circle USDC on Stellar Testnet → mint on Base/Eth/Arb/OP Sepolia. Chat: bridge N USDC to base sepolia 0x…",
+ "Move Circle USDC between Stellar Testnet and Base/Eth/Arb/OP/Arc. Chat: bridge N USDC to base 0x… or bridge in N USDC from base",
  },
 ];
 
