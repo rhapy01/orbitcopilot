@@ -32,20 +32,22 @@ export function ThemeProvider({
 
   useEffect(() => {
     const root = window.document.documentElement
+    const next =
+      theme === "system"
+        ? window.matchMedia("(prefers-color-scheme: dark)").matches
+          ? "dark"
+          : "light"
+        : theme
 
-    root.classList.remove("light", "dark")
-
-    if (theme === "system") {
-      const systemTheme = window.matchMedia("(prefers-color-scheme: dark)")
-        .matches
-        ? "dark"
-        : "light"
-
-      root.classList.add(systemTheme)
+    // Avoid classList churn (forced reflow) when the boot script already set the class.
+    if (root.classList.contains(next)) {
+      if (next === "dark") root.classList.remove("light")
+      else root.classList.remove("dark")
       return
     }
 
-    root.classList.add(theme)
+    root.classList.remove("light", "dark")
+    root.classList.add(next)
   }, [theme])
 
   const value = {

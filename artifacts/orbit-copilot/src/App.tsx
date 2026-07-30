@@ -13,7 +13,14 @@ import ChatPage from "@/pages/chat";
 const StatsPage = lazy(() => import("@/pages/stats"));
 const SettingsPage = lazy(() => import("@/pages/settings"));
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+      staleTime: 30_000,
+    },
+  },
+});
 
 function PageLoader() {
   return (

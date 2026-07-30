@@ -11,7 +11,6 @@ import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { ArrowUp, Loader2, Sparkles, TrendingUp, Repeat2, LayoutDashboard, RotateCcw, Coins } from "lucide-react";
 import type { ChatAction, CompletedOutcome } from "@/types/chat-action";
 import { NftGallery, type NftGalleryPayload } from "@/components/nft-gallery";
-import { OnboardingChecklist } from "@/components/onboarding-checklist";
 import { useWallet } from "@/hooks/use-wallet";
 import { Layout, type SidebarAction } from "@/components/layout";
 import { track } from "@/lib/analytics";
@@ -25,6 +24,11 @@ const TransactionActionCard = lazy(() =>
 const MarkdownContent = lazy(() =>
  import("@/components/markdown-content").then((m) => ({
   default: m.MarkdownContent,
+ }))
+);
+const OnboardingChecklist = lazy(() =>
+ import("@/components/onboarding-checklist").then((m) => ({
+  default: m.OnboardingChecklist,
  }))
 );
 
@@ -238,6 +242,8 @@ export default function ChatPage() {
  const sessionsKey = ["chat-sessions", publicKey ?? "anon"] as const;
  const inputRef = useRef<HTMLTextAreaElement>(null);
  const scrollRef = useRef<HTMLDivElement>(null);
+ const scrollBottomRef = useRef<HTMLDivElement>(null);
+ const scrollRafRef = useRef(0);
  const [pendingUser, setPendingUser] = useState<ChatMessage | null>(null);
  const [lessonMessages, setLessonMessages] = useState<ChatMessage[]>([]);
  const [input, setInput] = useState("");
@@ -289,7 +295,8 @@ export default function ChatPage() {
  return res.json() as Promise<{ canClaim?: boolean; claimed?: boolean }>;
  },
  enabled: Boolean(publicKey),
- staleTime: 15_000,
+ staleTime: 60_000,
+ refetchOnWindowFocus: false,
  });
 
  const quickActions = useMemo(
@@ -505,11 +512,17 @@ export default function ChatPage() {
  selectSession(null);
  }, [publicKey, selectSession]);
 
+ // Scroll without forced reflow loops: sentinel + rAF; throttle while streaming.
  useEffect(() => {
- if (scrollRef.current) {
- scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
- }
- }, [messages, isSending, streamingText]);
+  const tick = () => {
+   scrollBottomRef.current?.scrollIntoView({ block: "end" });
+  };
+  cancelAnimationFrame(scrollRafRef.current);
+  scrollRafRef.current = requestAnimationFrame(tick);
+  return () => cancelAnimationFrame(scrollRafRef.current);
+  // Intentionally coarse deps — avoid scrolling on every streamed character.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+ }, [messages.length, isSending, streamingText == null ? 0 : (streamingText.length / 64) | 0]);
 
  const handleSend = useCallback(
  (content: string) => {
@@ -532,9 +545,6 @@ export default function ChatPage() {
  content: text,
  sessionId: activeSessionId ?? readStoredSessionId(publicKey),
  });
- if (inputRef.current) {
- inputRef.current.style.height = "auto";
- }
  },
  [sendMutation, activeSessionId, isConnected, connecting, openConnectModal, isSending]
  );
@@ -635,11 +645,7 @@ export default function ChatPage() {
  <textarea
  ref={inputRef}
  value={input}
- onChange={(e) => {
- setInput(e.target.value);
- e.target.style.height = "auto";
- e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
- }}
+ onChange={(e) => setInput(e.target.value)}
  onKeyDown={(e) => {
  if (e.key === "Enter" && !e.shiftKey) {
  e.preventDefault();
@@ -649,7 +655,7 @@ export default function ChatPage() {
  placeholder="Ask anything"
  rows={1}
  disabled={sendMutation.isPending || isSending}
- className="max-h-40 min-h-[40px] flex-1 resize-none bg-transparent py-2 text-[16px] leading-6 text-foreground outline-none placeholder:text-muted-foreground sm:min-h-[44px] sm:py-2.5 sm:text-[15px]"
+ className="max-h-40 min-h-[40px] flex-1 resize-none overflow-y-auto bg-transparent py-2 text-[16px] leading-6 text-foreground outline-none placeholder:text-muted-foreground [field-sizing:content] sm:min-h-[44px] sm:py-2.5 sm:text-[15px]"
  />
  <button
  type="submit"
@@ -723,10 +729,12 @@ export default function ChatPage() {
  {/* Onboarding — fixed overlay so font/card mount never shifts main layout */}
  <div className="pointer-events-none fixed bottom-6 right-4 z-20 w-[min(20rem,calc(100vw-2rem))] sm:right-6 lg:w-80">
  <div className="pointer-events-auto">
+ <Suspense fallback={null}>
  <OnboardingChecklist
  hasChatted={sessions.length > 0 || messages.length > 0}
  onFund={() => handleSend("Fund my wallet")}
  />
+ </Suspense>
  </div>
  </div>
  </div>
@@ -897,6 +905,7 @@ export default function ChatPage() {
  )}
  </div>
  )}
+ <div ref={scrollBottomRef} aria-hidden className="h-px w-full" />
  </div>
  </div>
  <div className="shrink-0 bg-background/80 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 backdrop-blur-sm">

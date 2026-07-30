@@ -59,14 +59,14 @@ function shorten(key: string) {
 }
 
 function useIsMobile(breakpoint = 768) {
- const [isMobile, setIsMobile] = useState(() =>
- typeof window !== "undefined" ? window.innerWidth < breakpoint : false
- );
+ const [isMobile, setIsMobile] = useState(() => {
+  if (typeof window === "undefined") return false;
+  return window.matchMedia(`(max-width: ${breakpoint - 1}px)`).matches;
+ });
 
  useEffect(() => {
  const mq = window.matchMedia(`(max-width: ${breakpoint - 1}px)`);
  const onChange = () => setIsMobile(mq.matches);
- onChange();
  mq.addEventListener("change", onChange);
  return () => mq.removeEventListener("change", onChange);
  }, [breakpoint]);
@@ -133,7 +133,8 @@ export function Layout({
  return res.json();
  },
  enabled: Boolean(isConnected && publicKey),
- staleTime: 15_000,
+ staleTime: 60_000,
+ refetchOnWindowFocus: false,
  });
 
  const openPortfolio = useCallback(() => {

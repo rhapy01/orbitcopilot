@@ -148,8 +148,7 @@ export function EvmWalletProvider({ children }: { children: ReactNode }) {
   const [hasInjectedProvider, setHasInjectedProvider] = useState(false);
 
   useEffect(() => {
-    const restore = () => {
-      setHasInjectedProvider(Boolean(getEthereum()));
+    const restoreLocal = () => {
       try {
         const saved = localStorage.getItem("orbit_evm_address");
         const kind = localStorage.getItem("orbit_evm_kind") as EvmWalletKind;
@@ -164,10 +163,25 @@ export function EvmWalletProvider({ children }: { children: ReactNode }) {
         /* ignore */
       }
     };
-    restore();
-    const onSync = () => restore();
+    restoreLocal();
+
+    // Probe injected providers after idle — wallet extensions are expensive on the main thread.
+    const probeInjected = () => setHasInjectedProvider(Boolean(getEthereum()));
+    let idleId = 0;
+    let timeoutId = 0;
+    if ("requestIdleCallback" in window) {
+      idleId = requestIdleCallback(probeInjected, { timeout: 3000 });
+    } else {
+      timeoutId = globalThis.setTimeout(probeInjected, 600) as unknown as number;
+    }
+
+    const onSync = () => restoreLocal();
     window.addEventListener("orbit-evm-synced", onSync);
-    return () => window.removeEventListener("orbit-evm-synced", onSync);
+    return () => {
+      window.removeEventListener("orbit-evm-synced", onSync);
+      if (idleId && "cancelIdleCallback" in window) cancelIdleCallback(idleId);
+      if (timeoutId) globalThis.clearTimeout(timeoutId);
+    };
   }, []);
 
   const persist = useCallback((address: string, kind: EvmWalletKind) => {
