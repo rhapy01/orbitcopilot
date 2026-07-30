@@ -17,7 +17,10 @@ import {
  type ReactNode,
 } from "react";
 import { track } from "@/lib/analytics";
-import { persistInternalEvmSession } from "@/hooks/use-evm-wallet";
+import {
+ persistInternalEvmSession,
+ loadEvmShare,
+} from "@/hooks/use-evm-wallet";
 
 export type WalletType = "external" | "internal" | null;
 
@@ -152,6 +155,63 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
  return data as T;
 }
 
+/**
+ * Existing Stellar-only Orbit users: create/claim EVM on this device.
+ * Uses Stellar device share as ownership proof — never exposes EVM key without it.
+ */
+async function provisionEvmForExistingStellarUser(
+ stellarPublicKey: string,
+ evm?: { address?: string; deviceShareHex?: string }
+): Promise<void> {
+ if (evm?.deviceShareHex && evm.address) {
+  persistInternalEvmSession(evm.address, evm.deviceShareHex);
+  return;
+ }
+ if (evm?.address && loadEvmShare(evm.address)) {
+  persistInternalEvmSession(evm.address);
+  return;
+ }
+
+ const stellarShare = loadDeviceShare(stellarPublicKey);
+ if (!stellarShare) return;
+
+ const knownAddr =
+  evm?.address ??
+  (() => {
+   try {
+    return localStorage.getItem("orbit_evm_address");
+   } catch {
+    return null;
+   }
+  })();
+ if (knownAddr && loadEvmShare(knownAddr)) {
+  persistInternalEvmSession(knownAddr);
+  return;
+ }
+
+ try {
+  const claimed = await apiFetch<{
+   address: string;
+   deviceShareHex: string;
+   justCreated: boolean;
+  }>("/internal-wallet/evm/claim", {
+   method: "POST",
+   body: JSON.stringify({ deviceShareHex: stellarShare }),
+  });
+  persistInternalEvmSession(claimed.address, claimed.deviceShareHex);
+  track("wallet_connect", {
+   walletPublicKey: stellarPublicKey,
+   metadata: {
+    type: "internal",
+    method: claimed.justCreated ? "evm_created_for_existing" : "evm_share_claimed",
+    evmAddress: claimed.address,
+   },
+  });
+ } catch {
+  /* non-fatal — bridge can retry */
+ }
+}
+
 type AuthResponse = {
  ok?: boolean;
  user: AuthUser | null;
@@ -207,9 +267,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
  }
  setPublicKey(pk);
  setType("internal");
- if (evm?.address) {
-  persistInternalEvmSession(evm.address, evm.deviceShareHex);
- }
+ // Create or claim EVM for Stellar-only accounts / this browser
+ void provisionEvmForExistingStellarUser(pk, evm);
  }, []);
 
  const refreshSecurity = useCallback(async () => {

@@ -87,6 +87,23 @@ function reconstructFromShares(
  return secretBuf;
 }
 
+/** Prove this browser holds the Orbit Stellar device share (same account). */
+export async function assertOwnsStellarDeviceShare(
+ userId: number,
+ deviceShareHex: string
+): Promise<string> {
+ const wallet = await getInternalWallet(userId);
+ if (!wallet) throw new Error("Internal wallet not found");
+ const secretBuf = reconstructFromShares(
+ wallet.encryptedServerShare,
+ deviceShareHex,
+ userId,
+ wallet.stellarPublicKey
+ );
+ secretBuf.fill(0);
+ return wallet.stellarPublicKey;
+}
+
 function shouldFriendbot(): boolean {
  const net = (process.env.STELLAR_NETWORK ?? process.env.NETWORK ?? "testnet").toLowerCase();
  return net === "testnet" || net === "test";

@@ -18,6 +18,7 @@ import {
 } from "../lib/internal-wallet";
 import {
  signAndSendEvmTx,
+ claimInternalEvmForStellarDevice,
 } from "../lib/internal-evm-wallet";
 import { decrypt, deriveUserKey } from "../lib/crypto";
 import { db } from "@workspace/db";
@@ -85,11 +86,12 @@ router.get(
    emailVerified: !!user?.emailVerifiedAt,
    hasRecoveryBlob: !!existing?.encryptedRecoveryShare,
    evmAddress: wallets.evmAddress,
+   evmJustCreated: wallets.evmJustCreated,
    ...(wallets.evmDeviceShareHex
     ? { evmDeviceShareHex: wallets.evmDeviceShareHex }
     : {}),
-   ...(wallets.justCreated
-    ? { message: "Wallet created. Store deviceShareHex in localStorage." }
+   ...(wallets.justCreated || wallets.evmJustCreated
+    ? { message: "Wallet keys ready. Store device shares in localStorage." }
     : {}),
   });
  } catch (err) {
@@ -186,6 +188,34 @@ router.get(
    res.status(500).json({
     error: err instanceof Error ? err.message : "Failed to load EVM wallet",
    });
+  }
+ }
+);
+
+/**
+ * Provision EVM for existing Stellar-only Orbit users, or re-issue the EVM device
+ * share on this browser. Requires the Stellar device share as ownership proof.
+ */
+router.post(
+ "/internal-wallet/evm/claim",
+ async (req: Request & { userId?: number }, res): Promise<void> => {
+  if (!requireAuth(req, res)) return;
+  const { deviceShareHex } = req.body as { deviceShareHex?: string };
+  if (!deviceShareHex || typeof deviceShareHex !== "string") {
+   res.status(400).json({ error: "deviceShareHex (Stellar) is required" });
+   return;
+  }
+  try {
+   const claimed = await claimInternalEvmForStellarDevice(req.userId!, deviceShareHex);
+   res.json({
+    address: claimed.address,
+    deviceShareHex: claimed.deviceShareHex,
+    justCreated: claimed.justCreated,
+   });
+  } catch (err: unknown) {
+   const message = err instanceof Error ? err.message : "EVM claim failed";
+   logger.warn({ err, userId: req.userId }, "EVM claim failed");
+   res.status(400).json({ error: message });
   }
  }
 );

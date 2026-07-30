@@ -151,6 +151,76 @@ export async function ensureInternalEvmWallet(
   return { ...created, justCreated: true };
 }
 
+/**
+ * For existing Stellar-only Orbit users (or devices missing the EVM share):
+ * create EVM if needed, otherwise re-issue a device share from the recovery blob.
+ * Requires proof of Stellar device share so only the same Orbit account/device can claim.
+ */
+export async function claimInternalEvmForStellarDevice(
+  userId: number,
+  stellarDeviceShareHex: string
+): Promise<{ address: string; deviceShareHex: string; justCreated: boolean }> {
+  const { assertOwnsStellarDeviceShare } = await import("./internal-wallet");
+  await assertOwnsStellarDeviceShare(userId, stellarDeviceShareHex);
+
+  const existing = await getRow(userId);
+  if (!existing) {
+    const created = await createInternalEvmWallet(userId);
+    logger.info({ userId, address: created.address }, "EVM wallet created for existing Stellar user");
+    return { ...created, justCreated: true };
+  }
+
+  if (!existing.encrypted_recovery_share) {
+    throw new Error("EVM recovery blob missing — cannot provision this device");
+  }
+
+  let secretHex: string;
+  try {
+    secretHex = envelopeDecrypt(existing.encrypted_recovery_share, userId);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/authenticate data|Unsupported state|auth/i.test(msg)) {
+      throw new Error(
+        "EVM wallet encryption key mismatch (KMS_SECRET changed). Contact support to reset the EVM key."
+      );
+    }
+    throw err;
+  }
+
+  const secretBuf = Buffer.from(secretHex.replace(/^0x/i, ""), "hex");
+  // Verify recovery blob still matches stored address before rotating shares
+  const { ethers } = await import("ethers");
+  const check = new ethers.Wallet(`0x${secretBuf.toString("hex")}`);
+  if (check.address.toLowerCase() !== existing.evm_address.toLowerCase()) {
+    secretBuf.fill(0);
+    throw new Error("EVM recovery blob does not match stored address");
+  }
+
+  const { serverShareBuf, deviceShareBuf } = splitSecret(secretBuf);
+  const encryptedServerShare = envelopeEncrypt(serverShareBuf.toString("hex"), userId);
+  const deviceShareHex = deviceShareBuf.toString("hex");
+  secretBuf.fill(0);
+  serverShareBuf.fill(0);
+  deviceShareBuf.fill(0);
+
+  await db.execute(sql`
+    UPDATE internal_evm_wallets
+    SET encrypted_server_share = ${encryptedServerShare}
+    WHERE user_id = ${userId}
+  `);
+
+  logger.info(
+    { userId, address: existing.evm_address },
+    "EVM device share re-issued for existing Orbit user"
+  );
+
+  return {
+    address: existing.evm_address,
+    deviceShareHex,
+    justCreated: false,
+  };
+}
+
 export async function signAndSendEvmTx(input: {
   userId: number;
   deviceShareHex: string;

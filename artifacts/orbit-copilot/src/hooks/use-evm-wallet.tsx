@@ -235,9 +235,47 @@ export function EvmWalletProvider({ children }: { children: ReactNode }) {
             : "Sign in to Orbit (email/passkey) first"
         );
       }
-      const address = String(data.address);
+      let address = String(data.address);
       if (typeof data.deviceShareHex === "string" && data.deviceShareHex) {
         saveEvmShare(address, data.deviceShareHex);
+      }
+      if (!loadEvmShare(address)) {
+        // Existing Stellar user / this device never got the EVM share — claim it.
+        let stellarShare: string | null = null;
+        try {
+          for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key?.startsWith("orbit_device_share_")) {
+              stellarShare = localStorage.getItem(key);
+              if (stellarShare) break;
+            }
+          }
+        } catch {
+          /* ignore */
+        }
+        if (!stellarShare) {
+          throw new Error(
+            "Orbit wallet device share missing on this browser — recover this device (email + authenticator)"
+          );
+        }
+        const claimRes = await fetch("/api/internal-wallet/evm/claim", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ deviceShareHex: stellarShare }),
+        });
+        const claimed = await claimRes.json().catch(() => ({}));
+        if (!claimRes.ok) {
+          throw new Error(
+            typeof claimed?.error === "string"
+              ? claimed.error
+              : "Could not provision EVM key for this device"
+          );
+        }
+        address = String(claimed.address);
+        if (typeof claimed.deviceShareHex === "string") {
+          saveEvmShare(address, claimed.deviceShareHex);
+        }
       }
       if (!loadEvmShare(address)) {
         throw new Error(
