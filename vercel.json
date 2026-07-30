@@ -1,7 +1,7 @@
 {
   "version": 2,
-  "installCommand": "pnpm install --ignore-scripts",
-  "buildCommand": "pnpm --filter @workspace/api-server run build && pnpm --filter @workspace/orbit-copilot run build",
+  "installCommand": "corepack pnpm install --ignore-scripts",
+  "buildCommand": "corepack pnpm --filter @workspace/api-server run build && corepack pnpm --filter @workspace/orbit-copilot run build",
   "outputDirectory": "artifacts/orbit-copilot/dist/public",
   "framework": null,
   "rewrites": [
