@@ -3,8 +3,7 @@ import { Switch, Route, Router as WouterRouter } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { DeferredAnalytics } from "@/components/deferred-analytics";
-import { Toaster } from "@/components/ui/toaster";
-import { TooltipProvider } from "@/components/ui/tooltip";
+import { DeferredToaster } from "@/components/deferred-toaster";
 import { ThemeProvider } from "@/components/theme-provider";
 import { WalletProvider } from "@/hooks/use-wallet";
 import { EvmWalletProvider } from "@/hooks/use-evm-wallet";
@@ -47,13 +46,11 @@ function App() {
       <WalletProvider>
         <EvmWalletProvider>
         <QueryClientProvider client={queryClient}>
-          <TooltipProvider>
             <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
               <Router />
             </WouterRouter>
-            <Toaster />
+            <DeferredToaster />
             <DeferredAnalytics />
-          </TooltipProvider>
         </QueryClientProvider>
         </EvmWalletProvider>
       </WalletProvider>

@@ -857,9 +857,9 @@ export default function ChatPage() {
  <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-orbit-gradient">
  <Sparkles className="h-3.5 w-3.5 text-white" />
  </div>
- <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-primary [animation-delay:0ms]" />
- <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-accent [animation-delay:150ms]" />
- <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-chart-5 [animation-delay:300ms]" />
+ <span className="h-1.5 w-1.5 animate-orbit-dot rounded-full bg-primary [animation-delay:0ms]" />
+ <span className="h-1.5 w-1.5 animate-orbit-dot rounded-full bg-accent [animation-delay:150ms]" />
+ <span className="h-1.5 w-1.5 animate-orbit-dot rounded-full bg-chart-5 [animation-delay:300ms]" />
  </div>
  )}
 

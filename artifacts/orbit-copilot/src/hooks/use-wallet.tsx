@@ -212,21 +212,12 @@ export function WalletProvider({ children }: { children: ReactNode }) {
  }, [applySecurity]);
 
  useEffect(() => {
- const restore = async () => {
- try {
- const data = await apiFetch<AuthResponse>("/auth/me");
- if (data.user && data.security) applySecurity(data.security, data.user);
+ let cancelled = false;
 
- const walletData = await apiFetch<{
- publicKey: string;
- deviceShareHex?: string;
- recoveryReady?: boolean;
- }>("/internal-wallet");
-
- applyInternalWallet(walletData.publicKey, walletData.deviceShareHex);
- } catch {
+ const probeFreighter = async () => {
  try {
  const freighter = await import("@stellar/freighter-api");
+ if (cancelled) return;
  const connResult = await freighter.isConnected();
  if (!connResult.isConnected) return;
  setFreighterInstalled(true);
@@ -240,6 +231,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
  // Stay disconnected - Orbit is testnet-only
  return;
  }
+ if (cancelled) return;
  freighterRef.current = {
  networkPassphrase: passphrase || null,
  signTransaction: async (xdr, networkPassphrase) => {
@@ -256,9 +248,39 @@ export function WalletProvider({ children }: { children: ReactNode }) {
  } catch {
  /* no freighter */
  }
+ };
+
+ const restore = async () => {
+ try {
+ const data = await apiFetch<AuthResponse>("/auth/me");
+ if (cancelled) return;
+ if (data.user && data.security) applySecurity(data.security, data.user);
+
+ const walletData = await apiFetch<{
+ publicKey: string;
+ deviceShareHex?: string;
+ recoveryReady?: boolean;
+ }>("/internal-wallet");
+
+ if (cancelled) return;
+ applyInternalWallet(walletData.publicKey, walletData.deviceShareHex);
+ } catch {
+ // Freighter probe is non-critical — run after idle so it doesn't block first paint.
+ if ("requestIdleCallback" in window) {
+ requestIdleCallback(() => {
+ void probeFreighter();
+ }, { timeout: 2500 });
+ } else {
+ globalThis.setTimeout(() => {
+ void probeFreighter();
+ }, 400);
+ }
  }
  };
- restore();
+ void restore();
+ return () => {
+ cancelled = true;
+ };
  }, [applyInternalWallet, applySecurity]);
 
  const openConnectModal = useCallback(() => setConnectModalOpen(true), []);

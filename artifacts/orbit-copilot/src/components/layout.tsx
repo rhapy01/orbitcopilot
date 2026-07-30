@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, lazy, Suspense } from "react";
 import {
  PanelLeft,
  SquarePen,
@@ -19,16 +19,34 @@ import {
  BookOpen,
  Sparkles,
  Settings,
+ MessageSquareHeart,
 } from "lucide-react";
 import { useTheme } from "@/components/theme-provider";
 import { useWallet } from "@/hooks/use-wallet";
-import { WalletConnectModal } from "@/components/auth/wallet-connect-modal";
-import { SecuritySettings } from "@/components/auth/security-settings";
-import { FeedbackDialog } from "@/components/feedback-dialog";
-import { PortfolioDrawer } from "@/components/portfolio-drawer";
 import { cn } from "@/lib/utils";
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
+
+const WalletConnectModal = lazy(() =>
+ import("@/components/auth/wallet-connect-modal").then((m) => ({
+  default: m.WalletConnectModal,
+ }))
+);
+const SecuritySettings = lazy(() =>
+ import("@/components/auth/security-settings").then((m) => ({
+  default: m.SecuritySettings,
+ }))
+);
+const PortfolioDrawer = lazy(() =>
+ import("@/components/portfolio-drawer").then((m) => ({
+  default: m.PortfolioDrawer,
+ }))
+);
+const FeedbackDialog = lazy(() =>
+ import("@/components/feedback-dialog").then((m) => ({
+  default: m.FeedbackDialog,
+ }))
+);
 
 type BetaNftStatus = {
  eligible: boolean;
@@ -468,11 +486,23 @@ export function Layout({
  <PieChart className="h-4 w-4" />
  </button>
  )}
- <FeedbackDialog
- onWhitelisted={(prompt) =>
- onSidebarAction?.({ type: "prompt", prompt })
+ <Suspense
+ fallback={
+  <button
+   type="button"
+   className="rounded-lg p-2 text-muted-foreground hover:bg-primary/10 hover:text-primary"
+   aria-label="Send feedback"
+  >
+   <MessageSquareHeart className="h-4 w-4" />
+  </button>
  }
- />
+ >
+  <FeedbackDialog
+   onWhitelisted={(prompt) =>
+    onSidebarAction?.({ type: "prompt", prompt })
+   }
+  />
+ </Suspense>
  <Link
  href="/settings"
  className="rounded-lg p-2 text-muted-foreground hover:bg-primary/10 hover:text-primary"
@@ -511,18 +541,26 @@ export function Layout({
  <main className="flex min-h-0 flex-1 flex-col">{children}</main>
  </div>
 
- {/* Modals */}
- <WalletConnectModal open={connectModalOpen} onOpenChange={setConnectModalOpen} />
- <SecuritySettings open={securityOpen} onOpenChange={setSecurityOpen} />
- <PortfolioDrawer
- open={portfolioOpen}
- onClose={() => setPortfolioOpen(false)}
- publicKey={publicKey}
- onAction={(command) => {
- setPortfolioOpen(false);
- onSidebarAction?.({ type: "prompt", prompt: command });
- }}
- />
+ {/* Modals — loaded on demand to keep first paint light */}
+ <Suspense fallback={null}>
+  {connectModalOpen ? (
+   <WalletConnectModal open={connectModalOpen} onOpenChange={setConnectModalOpen} />
+  ) : null}
+  {securityOpen ? (
+   <SecuritySettings open={securityOpen} onOpenChange={setSecurityOpen} />
+  ) : null}
+  {portfolioOpen ? (
+   <PortfolioDrawer
+    open={portfolioOpen}
+    onClose={() => setPortfolioOpen(false)}
+    publicKey={publicKey}
+    onAction={(command) => {
+     setPortfolioOpen(false);
+     onSidebarAction?.({ type: "prompt", prompt: command });
+    }}
+   />
+  ) : null}
+ </Suspense>
  </div>
  );
 }
