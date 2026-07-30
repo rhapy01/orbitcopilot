@@ -1,7 +1,8 @@
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { Switch, Route, Router as WouterRouter } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Analytics } from "@vercel/analytics/react";
+import { Loader2 } from "lucide-react";
+import { DeferredAnalytics } from "@/components/deferred-analytics";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/components/theme-provider";
@@ -9,10 +10,19 @@ import { WalletProvider } from "@/hooks/use-wallet";
 import { EvmWalletProvider } from "@/hooks/use-evm-wallet";
 import { track } from "@/lib/analytics";
 import ChatPage from "@/pages/chat";
-import StatsPage from "@/pages/stats";
-import SettingsPage from "@/pages/settings";
+
+const StatsPage = lazy(() => import("@/pages/stats"));
+const SettingsPage = lazy(() => import("@/pages/settings"));
 
 const queryClient = new QueryClient();
+
+function PageLoader() {
+  return (
+    <div className="flex min-h-[40vh] items-center justify-center">
+      <Loader2 className="h-6 w-6 animate-spin text-primary" />
+    </div>
+  );
+}
 
 function Router() {
   useEffect(() => {
@@ -20,12 +30,14 @@ function Router() {
   }, []);
 
   return (
-    <Switch>
-      <Route path="/" component={ChatPage} />
-      <Route path="/stats" component={StatsPage} />
-      <Route path="/settings" component={SettingsPage} />
-      <Route component={ChatPage} />
-    </Switch>
+    <Suspense fallback={<PageLoader />}>
+      <Switch>
+        <Route path="/" component={ChatPage} />
+        <Route path="/stats" component={StatsPage} />
+        <Route path="/settings" component={SettingsPage} />
+        <Route component={ChatPage} />
+      </Switch>
+    </Suspense>
   );
 }
 
@@ -40,7 +52,7 @@ function App() {
               <Router />
             </WouterRouter>
             <Toaster />
-            <Analytics />
+            <DeferredAnalytics />
           </TooltipProvider>
         </QueryClientProvider>
         </EvmWalletProvider>

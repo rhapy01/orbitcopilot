@@ -30,7 +30,10 @@ type EvmWalletState = {
   connectInjected: () => Promise<string>;
   ensureOrbitEvm: () => Promise<string>;
   disconnectEvm: () => void;
-  sendEvmTx: (tx: EvmTxRequest, opts?: { sourceChain?: string }) => Promise<string>;
+  sendEvmTx: (
+    tx: EvmTxRequest,
+    opts?: { sourceChain?: string; address?: string; kind?: EvmWalletKind }
+  ) => Promise<string>;
   switchChain: (chainId: number) => Promise<void>;
 };
 
@@ -217,12 +220,17 @@ export function EvmWalletProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const sendEvmTx = useCallback(
-    async (tx: EvmTxRequest, opts?: { sourceChain?: string }) => {
-      if (!evmAddress || !evmKind) {
+    async (
+      tx: EvmTxRequest,
+      opts?: { sourceChain?: string; address?: string; kind?: EvmWalletKind }
+    ) => {
+      const address = opts?.address ?? evmAddress;
+      const kind = opts?.kind ?? evmKind;
+      if (!address || !kind) {
         throw new Error("Connect an EVM wallet first (MetaMask or Orbit EVM)");
       }
 
-      if (evmKind === "injected") {
+      if (kind === "injected") {
         const ethereum = getEthereum();
         if (!ethereum) throw new Error("Browser wallet disconnected");
         await switchOrAddChain(ethereum, tx.chainId);
@@ -230,7 +238,7 @@ export function EvmWalletProvider({ children }: { children: ReactNode }) {
           method: "eth_sendTransaction",
           params: [
             {
-              from: evmAddress,
+              from: address,
               to: tx.to,
               data: tx.data,
               value: tx.value ?? "0x0",
@@ -240,7 +248,7 @@ export function EvmWalletProvider({ children }: { children: ReactNode }) {
         return hash;
       }
 
-      const share = loadEvmShare(evmAddress);
+      const share = loadEvmShare(address);
       if (!share) throw new Error("Orbit EVM device share missing — reconnect Orbit EVM");
       const res = await fetch("/api/internal-wallet/evm/send", {
         method: "POST",

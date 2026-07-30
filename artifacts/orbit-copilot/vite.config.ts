@@ -18,7 +18,7 @@ export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
-    runtimeErrorOverlay(),
+    ...(process.env.NODE_ENV !== "production" ? [runtimeErrorOverlay()] : []),
     ...(process.env.NODE_ENV !== "production" &&
     process.env.REPL_ID !== undefined
       ? [
@@ -44,6 +44,36 @@ export default defineConfig({
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
+    target: "es2020",
+    cssMinify: true,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return;
+          if (id.includes("@stellar/stellar-sdk")) return "stellar-sdk";
+          if (
+            id.includes("react-markdown") ||
+            id.includes("remark") ||
+            id.includes("micromark")
+          ) {
+            return "markdown";
+          }
+          if (id.includes("@radix-ui")) return "radix";
+          if (id.includes("lucide-react")) return "icons";
+          if (id.includes("recharts") || id.includes("d3-")) return "charts";
+          if (id.includes("@tanstack")) return "query";
+          if (id.includes("jszip")) return "jszip";
+          if (
+            id.includes("react-dom") ||
+            id.includes("/react/") ||
+            id.includes("scheduler")
+          ) {
+            return "react-vendor";
+          }
+        },
+      },
+    },
+    chunkSizeWarningLimit: 600,
   },
   server: {
     port,

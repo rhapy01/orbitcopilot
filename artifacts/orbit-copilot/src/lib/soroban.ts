@@ -16,14 +16,12 @@ import {
   rpc,
   xdr,
 } from "@stellar/stellar-sdk";
+import {
+  STELLAR_NETWORK_PASSPHRASE,
+  SOROBAN_RPC_URL,
+} from "./stellar-constants";
 
-/** Stellar Testnet passphrase (Freighter + Soroban). */
-export const STELLAR_NETWORK_PASSPHRASE = Networks.TESTNET;
-
-/** Public Soroban RPC for testnet. */
-export const SOROBAN_RPC_URL =
-  import.meta.env.VITE_SOROBAN_RPC_URL?.trim() ||
-  "https://soroban-testnet.stellar.org";
+export { STELLAR_NETWORK_PASSPHRASE, SOROBAN_RPC_URL };
 
 export function getSorobanServer(): rpc.Server {
   return new rpc.Server(SOROBAN_RPC_URL);

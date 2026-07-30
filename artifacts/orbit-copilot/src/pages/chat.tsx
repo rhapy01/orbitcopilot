@@ -4,18 +4,38 @@ import {
  useEffect,
  useCallback,
  useMemo,
+ lazy,
+ Suspense,
 } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { ArrowUp, Loader2, Sparkles, TrendingUp, Repeat2, LayoutDashboard, RotateCcw, Coins } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import { TransactionActionCard, type ChatAction, type CompletedOutcome } from "@/components/transaction-action-card";
+import type { ChatAction, CompletedOutcome } from "@/types/chat-action";
 import { NftGallery, type NftGalleryPayload } from "@/components/nft-gallery";
 import { OnboardingChecklist } from "@/components/onboarding-checklist";
 import { useWallet } from "@/hooks/use-wallet";
 import { Layout, type SidebarAction } from "@/components/layout";
 import { track } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
+
+const TransactionActionCard = lazy(() =>
+ import("@/components/transaction-action-card").then((m) => ({
+  default: m.TransactionActionCard,
+ }))
+);
+const MarkdownContent = lazy(() =>
+ import("@/components/markdown-content").then((m) => ({
+  default: m.MarkdownContent,
+ }))
+);
+
+function ActionCardSkeleton() {
+ return (
+  <div className="mt-2 w-full max-w-sm rounded-xl border border-primary/10 bg-card/50 p-4">
+   <div className="h-4 w-2/3 animate-pulse rounded bg-muted" />
+   <div className="mt-2 h-3 w-full animate-pulse rounded bg-muted/70" />
+  </div>
+ );
+}
 
 const BETA_CLAIM_PROMPT =
  "i have submitted my feedback, mint my beta tester nft";
@@ -394,7 +414,11 @@ export default function ChatPage() {
  }
  setStreamingText(null);
  if (streamError) throw streamError;
- if (!finalMessage) throw new Error("No response received");
+ if (!finalMessage) {
+ throw new Error(
+ "Chat timed out or disconnected before a reply finished. Try again, or ask a shorter question like “show my XLM balance”."
+ );
+ }
  return finalMessage;
  }
 
@@ -747,23 +771,9 @@ export default function ChatPage() {
  )}
  >
  {isUser ? msg.content : (
- <ReactMarkdown
- remarkPlugins={[remarkGfm]}
- components={{
- p: ({ children }) => <p className="mb-1.5 last:mb-0">{children}</p>,
- strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
- ul: ({ children }) => <ul className="list-disc pl-4 mb-1.5 space-y-0.5">{children}</ul>,
- ol: ({ children }) => <ol className="list-decimal pl-4 mb-1.5 space-y-0.5">{children}</ol>,
- li: ({ children }) => <li className="leading-6">{children}</li>,
- code: ({ children }) => <code className="rounded bg-primary/10 px-1 py-0.5 text-[13px] font-mono">{children}</code>,
- h1: ({ children }) => <p className="font-semibold mb-1">{children}</p>,
- h2: ({ children }) => <p className="font-semibold mb-1">{children}</p>,
- h3: ({ children }) => <p className="font-medium mb-0.5">{children}</p>,
- a: ({ href, children }) => <a href={href} target="_blank" rel="noreferrer" className="text-primary underline">{children}</a>,
- }}
- >
- {msg.content}
- </ReactMarkdown>
+ <Suspense fallback={<p className="text-sm text-muted-foreground">…</p>}>
+  <MarkdownContent content={msg.content} />
+ </Suspense>
  )}
  </div>
  {isLastUserMsg && !isSending && (
@@ -782,6 +792,7 @@ export default function ChatPage() {
  )}
  {actionsList.length > 1 ? (
  <div className="mt-2 w-full max-w-sm">
+ <Suspense fallback={<ActionCardSkeleton />}>
  <TransactionActionCard
  key={`${msg.id}-queue`}
  action={actionsList[0]!}
@@ -804,9 +815,11 @@ export default function ChatPage() {
  }}
  onContinue={handleSend}
  />
+ </Suspense>
  </div>
  ) : actionsList.length === 1 ? (
  <div className="mt-2 w-full max-w-sm">
+ <Suspense fallback={<ActionCardSkeleton />}>
  <TransactionActionCard
  key={`${msg.id}-action-${actionsList[0]!.type}-${actionsList[0]!.destAsset ?? actionsList[0]!.marketHint ?? ""}`}
  action={actionsList[0]!}
@@ -828,6 +841,7 @@ export default function ChatPage() {
  }}
  onContinue={handleSend}
  />
+ </Suspense>
  </div>
  ) : null}
  </div>
@@ -853,23 +867,9 @@ export default function ChatPage() {
  <Sparkles className="h-3.5 w-3.5 text-white" />
  </div>
  <div className="max-w-[92%] rounded-2xl bg-card px-3.5 py-3 text-[15px] leading-7 text-foreground ring-1 ring-primary/10 sm:max-w-[75%] sm:px-4">
- <ReactMarkdown
- remarkPlugins={[remarkGfm]}
- components={{
- p: ({ children }) => <p className="mb-1.5 last:mb-0">{children}</p>,
- strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
- ul: ({ children }) => <ul className="list-disc pl-4 mb-1.5 space-y-0.5">{children}</ul>,
- ol: ({ children }) => <ol className="list-decimal pl-4 mb-1.5 space-y-0.5">{children}</ol>,
- li: ({ children }) => <li className="leading-6">{children}</li>,
- code: ({ children }) => <code className="rounded bg-primary/10 px-1 py-0.5 text-[13px] font-mono">{children}</code>,
- h1: ({ children }) => <p className="font-semibold mb-1">{children}</p>,
- h2: ({ children }) => <p className="font-semibold mb-1">{children}</p>,
- h3: ({ children }) => <p className="font-medium mb-0.5">{children}</p>,
- a: ({ href, children }) => <a href={href} target="_blank" rel="noreferrer" className="text-primary underline">{children}</a>,
- }}
- >
- {streamingText}
- </ReactMarkdown>
+ <Suspense fallback={<span className="text-muted-foreground">…</span>}>
+  <MarkdownContent content={streamingText} />
+ </Suspense>
  <span className="inline-block w-1.5 h-3.5 bg-primary/60 animate-pulse ml-0.5 align-middle" />
  </div>
  </div>

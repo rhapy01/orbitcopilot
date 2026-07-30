@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, createContext, useContext } from "react";
-import { STELLAR_NETWORK_PASSPHRASE } from "@/lib/soroban";
+import { STELLAR_NETWORK_PASSPHRASE } from "@/lib/stellar-constants";
 import { track } from "@/lib/analytics";
 
 interface FreighterState {

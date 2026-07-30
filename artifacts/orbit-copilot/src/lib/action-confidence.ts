@@ -1,4 +1,4 @@
-import type { ChatAction } from "@/components/transaction-action-card";
+import type { ChatAction } from "@/types/chat-action";
 
 /** Plain-language confidence notes shown before wallet sign. */
 export function actionConfidence(action: ChatAction): {
