@@ -13,11 +13,36 @@ if (Number.isNaN(port) || port <= 0) {
 // Vercel / production static hosting uses root base path by default.
 const basePath = process.env.BASE_PATH ?? "/";
 
+/** Preload primary Inter woff2 so optional fonts land before first paint when possible. */
+function injectFontPreload() {
+  return {
+    name: "inject-font-preload",
+    apply: "build" as const,
+    transformIndexHtml: {
+      order: "post" as const,
+      handler(html: string, ctx: { bundle?: Record<string, { type: string; fileName?: string }> }) {
+        if (!ctx.bundle) return html;
+        const font = Object.values(ctx.bundle).find(
+          (asset) =>
+            asset.type === "asset" &&
+            asset.fileName?.includes("inter-latin-400-normal") &&
+            asset.fileName.endsWith(".woff2")
+        );
+        if (!font?.fileName) return html;
+        const prefix = basePath.endsWith("/") ? basePath : `${basePath}/`;
+        const tag = `<link rel="preload" href="${prefix}assets/${font.fileName}" as="font" type="font/woff2" crossorigin>`;
+        return html.replace("</head>", `${tag}\n </head>`);
+      },
+    },
+  };
+}
+
 export default defineConfig({
   base: basePath,
   plugins: [
     react(),
     tailwindcss(),
+    injectFontPreload(),
     ...(process.env.NODE_ENV !== "production" ? [runtimeErrorOverlay()] : []),
     ...(process.env.NODE_ENV !== "production" &&
     process.env.REPL_ID !== undefined

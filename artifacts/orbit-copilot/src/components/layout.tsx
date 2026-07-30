@@ -195,6 +195,9 @@ export function Layout({
  <img
  src="/orbit-logo-ui.png"
  alt="Orbit"
+ width={32}
+ height={32}
+ decoding="async"
  className="h-8 w-8 object-contain"
  />
  </div>
@@ -428,6 +431,9 @@ export function Layout({
  <img
  src="/orbit-logo-ui.png"
  alt="Orbit"
+ width={28}
+ height={28}
+ decoding="async"
  className="h-7 w-7 shrink-0 object-contain"
  />
  <ChevronDown className="h-4 w-4 shrink-0 text-primary/60" />

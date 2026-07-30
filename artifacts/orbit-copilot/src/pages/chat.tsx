@@ -720,12 +720,14 @@ export default function ChatPage() {
  ))}
  </div>
 
- {/* Onboarding - inline on small screens, floating on larger */}
- <div className="mt-6 w-full max-w-2xl sm:fixed sm:bottom-6 sm:right-6 sm:z-20 sm:mt-0 sm:w-72 lg:w-80">
+ {/* Onboarding — fixed overlay so font/card mount never shifts main layout */}
+ <div className="pointer-events-none fixed bottom-6 right-4 z-20 w-[min(20rem,calc(100vw-2rem))] sm:right-6 lg:w-80">
+ <div className="pointer-events-auto">
  <OnboardingChecklist
  hasChatted={sessions.length > 0 || messages.length > 0}
  onFund={() => handleSend("Fund my wallet")}
  />
+ </div>
  </div>
  </div>
  ) : (
