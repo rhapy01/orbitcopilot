@@ -28,11 +28,26 @@ import { sendEmail, otpEmailHtml, otpEmailText, welcomeEmailHtml, welcomeEmailTe
 import { createSession, revokeSession, COOKIE_NAME, SESSION_TTL_MS } from "../lib/session";
 import {
  createInternalWallet,
- ensureInternalWallet,
+ ensureOrbitWallets,
  isRecoveryReady,
  recoverWithEmailAndTotp,
 } from "../lib/internal-wallet";
+import { ensureInternalEvmWallet } from "../lib/internal-evm-wallet";
 import { logger } from "../lib/logger";
+
+/** Attach EVM fields to auth wallet payloads (same Orbit account). */
+async function withEvmWalletFields(
+ userId: number,
+ stellar: { publicKey: string; deviceShareHex?: string }
+) {
+ const evm = await ensureInternalEvmWallet(userId);
+ return {
+ publicKey: stellar.publicKey,
+ ...(stellar.deviceShareHex ? { deviceShareHex: stellar.deviceShareHex } : {}),
+ evmAddress: evm.address,
+ ...(evm.deviceShareHex ? { evmDeviceShareHex: evm.deviceShareHex } : {}),
+ };
+}
 
 const router: IRouter = Router();
 
@@ -343,11 +358,11 @@ router.post("/auth/passkey/signup-verify", async (req, res): Promise<void> => {
  res.cookie(COOKIE_NAME, token, sessionCookieOpts());
 
  const sec = await securityPayload(userId);
+ const withEvm = await withEvmWalletFields(userId, wallet);
  res.json({
  ok: true,
  ...sec,
- publicKey: wallet.publicKey,
- deviceShareHex: wallet.deviceShareHex,
+ ...withEvm,
  });
  } catch (err) {
  logger.error({ err }, "Passkey signup-verify failed");
@@ -458,7 +473,7 @@ router.post("/auth/verify-otp", async (req, res): Promise<void> => {
  return;
  }
 
- const wallet = await ensureInternalWallet(user.id);
+ const wallet = await ensureOrbitWallets(user.id);
  const token = await createSession(user.id, req);
  res.cookie(COOKIE_NAME, token, sessionCookieOpts());
 
@@ -468,6 +483,8 @@ router.post("/auth/verify-otp", async (req, res): Promise<void> => {
  ...sec,
  publicKey: wallet.publicKey,
  ...(wallet.deviceShareHex ? { deviceShareHex: wallet.deviceShareHex } : {}),
+ evmAddress: wallet.evmAddress,
+ ...(wallet.evmDeviceShareHex ? { evmDeviceShareHex: wallet.evmDeviceShareHex } : {}),
  });
 });
 
@@ -652,11 +669,11 @@ router.post("/auth/recover/complete", async (req, res): Promise<void> => {
  res.cookie(COOKIE_NAME, token, sessionCookieOpts());
 
  const sec = await securityPayload(user.id);
+ const withEvm = await withEvmWalletFields(user.id, recovered);
  res.json({
  ok: true,
  ...sec,
- publicKey: recovered.publicKey,
- deviceShareHex: recovered.deviceShareHex,
+ ...withEvm,
  message: "Device restored. Previous device shares are invalidated.",
  });
  } catch (err: unknown) {
@@ -956,7 +973,7 @@ router.post("/auth/passkey/login-verify", async (req, res): Promise<void> => {
  })
  .where(eq(passkeyCredentialsTable.id, passkeyRow.id));
 
- const wallet = await ensureInternalWallet(user.id);
+ const wallet = await ensureOrbitWallets(user.id);
  const token = await createSession(user.id, req);
  res.cookie(COOKIE_NAME, token, sessionCookieOpts());
 
@@ -966,6 +983,8 @@ router.post("/auth/passkey/login-verify", async (req, res): Promise<void> => {
  ...sec,
  publicKey: wallet.publicKey,
  ...(wallet.deviceShareHex ? { deviceShareHex: wallet.deviceShareHex } : {}),
+ evmAddress: wallet.evmAddress,
+ ...(wallet.evmDeviceShareHex ? { evmDeviceShareHex: wallet.evmDeviceShareHex } : {}),
  });
  } catch (err) {
  logger.error({ err }, "Passkey login-verify failed");

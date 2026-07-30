@@ -459,6 +459,32 @@ export async function buildPortfolioIntel(
  );
 }
 
+const PORTFOLIO_SCAN_MS = 12_000;
+
+async function buildPortfolioIntelBounded(publicKey: string): Promise<PortfolioIntel | null> {
+ try {
+ return await Promise.race([
+ buildPortfolioIntel(publicKey),
+ new Promise<never>((_, reject) =>
+ setTimeout(() => reject(new Error("portfolio_scan_timeout")), PORTFOLIO_SCAN_MS)
+ ),
+ ]);
+ } catch {
+ return null;
+ }
+}
+
+async function quickWalletBalanceLines(publicKey: string): Promise<string> {
+ const classic = await getAccountBalances(publicKey).catch(
+ (): Awaited<ReturnType<typeof getAccountBalances>> => []
+ );
+ if (!classic.length) return "No wallet balances found on testnet.";
+ return classic
+ .filter((b) => b.balance > 0)
+ .map((b) => `${b.assetCode}: ${b.balance.toFixed(4)}`)
+ .join("\n");
+}
+
 function buildRebalanceMoves(positions: PortfolioPosition[]): RebalanceMove[] {
  const moves: RebalanceMove[] = [];
  let priority = 1;
@@ -535,7 +561,15 @@ function buildRebalanceMoves(positions: PortfolioPosition[]): RebalanceMove[] {
 }
 
 export async function formatPortfolioIntel(publicKey: string): Promise<string> {
- const intel = await buildPortfolioIntel(publicKey);
+ const intel = await buildPortfolioIntelBounded(publicKey);
+ if (!intel) {
+ const balances = await quickWalletBalanceLines(publicKey);
+ return [
+ `Portfolio scan is still running across protocols — here are wallet balances for now:`,
+ balances,
+ `Ask again in a few seconds for LP, farms, and lending positions.`,
+ ].join("\n");
+ }
  const short = `${publicKey.slice(0, 4)}…${publicKey.slice(-4)}`;
 
  const lines: string[] = [
@@ -634,7 +668,15 @@ export async function formatRebalancePlan(publicKey: string): Promise<string> {
 }
 
 export async function formatEarningReport(publicKey: string): Promise<string> {
- const intel = await buildPortfolioIntel(publicKey);
+ const intel = await buildPortfolioIntelBounded(publicKey);
+ if (!intel) {
+ const balances = await quickWalletBalanceLines(publicKey);
+ return [
+ `Still scanning LP, farms, and lending — wallet balances for now:`,
+ balances,
+ `Try "what's earning?" again in a few seconds for the full scoreboard.`,
+ ].join("\n");
+ }
  const earning = intel.positions.filter((p) => p.status === "earning");
  const idle = intel.positions.filter((p) => p.status === "idle" && p.kind === "wallet");
 

@@ -289,6 +289,31 @@ export async function ensureInternalWallet(
 }
 
 /**
+ * Orbit embedded wallet = Stellar (ed25519) + EVM (secp256k1) for the same user.
+ * Always provision both together — one internal wallet system, not separate products.
+ */
+export async function ensureOrbitWallets(userId: number): Promise<{
+ publicKey: string;
+ deviceShareHex?: string;
+ justCreated: boolean;
+ evmAddress: string;
+ evmDeviceShareHex?: string;
+ evmJustCreated: boolean;
+}> {
+ const { ensureInternalEvmWallet } = await import("./internal-evm-wallet");
+ const stellar = await ensureInternalWallet(userId);
+ const evm = await ensureInternalEvmWallet(userId);
+ return {
+ publicKey: stellar.publicKey,
+ deviceShareHex: stellar.deviceShareHex,
+ justCreated: stellar.justCreated,
+ evmAddress: evm.address,
+ evmDeviceShareHex: evm.deviceShareHex,
+ evmJustCreated: evm.justCreated,
+ };
+}
+
+/**
  * Testnet-only: delete encrypted wallet rows so the next login recreates
  * under the current KMS_SECRET. Use when KMS was rotated and old blobs are unreadable.
  * Does NOT migrate funds from the old G-address.

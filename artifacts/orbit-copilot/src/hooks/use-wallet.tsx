@@ -17,6 +17,7 @@ import {
  type ReactNode,
 } from "react";
 import { track } from "@/lib/analytics";
+import { persistInternalEvmSession } from "@/hooks/use-evm-wallet";
 
 export type WalletType = "external" | "internal" | null;
 
@@ -157,6 +158,8 @@ type AuthResponse = {
  security: SecurityState;
  publicKey?: string;
  deviceShareHex?: string;
+ evmAddress?: string;
+ evmDeviceShareHex?: string;
 };
 
 export function WalletProvider({ children }: { children: ReactNode }) {
@@ -188,7 +191,11 @@ export function WalletProvider({ children }: { children: ReactNode }) {
  setRequiresRecoverySetup(sec.requiresRecoverySetup);
  }, []);
 
- const applyInternalWallet = useCallback((pk: string, deviceShareHex?: string) => {
+ const applyInternalWallet = useCallback((
+  pk: string,
+  deviceShareHex?: string,
+  evm?: { address?: string; deviceShareHex?: string }
+ ) => {
  if (deviceShareHex) {
  saveDeviceShare(pk, deviceShareHex);
  setHasDeviceShare(true);
@@ -200,6 +207,9 @@ export function WalletProvider({ children }: { children: ReactNode }) {
  }
  setPublicKey(pk);
  setType("internal");
+ if (evm?.address) {
+  persistInternalEvmSession(evm.address, evm.deviceShareHex);
+ }
  }, []);
 
  const refreshSecurity = useCallback(async () => {
@@ -260,10 +270,15 @@ export function WalletProvider({ children }: { children: ReactNode }) {
  publicKey: string;
  deviceShareHex?: string;
  recoveryReady?: boolean;
+ evmAddress?: string;
+ evmDeviceShareHex?: string;
  }>("/internal-wallet");
 
  if (cancelled) return;
- applyInternalWallet(walletData.publicKey, walletData.deviceShareHex);
+ applyInternalWallet(walletData.publicKey, walletData.deviceShareHex, {
+  address: walletData.evmAddress,
+  deviceShareHex: walletData.evmDeviceShareHex,
+ });
  } catch {
  // Freighter probe is non-critical — run after idle so it doesn't block first paint.
  if ("requestIdleCallback" in window) {
@@ -343,7 +358,10 @@ export function WalletProvider({ children }: { children: ReactNode }) {
  });
  if (data.user && data.security) applySecurity(data.security, data.user);
  if (!data.publicKey || !data.deviceShareHex) throw new Error("Wallet creation failed");
- applyInternalWallet(data.publicKey, data.deviceShareHex);
+ applyInternalWallet(data.publicKey, data.deviceShareHex, {
+  address: data.evmAddress,
+  deviceShareHex: data.evmDeviceShareHex,
+ });
  track("wallet_connect", {
  walletPublicKey: data.publicKey,
  metadata: { type: "internal", method: "passkey_signup" },
@@ -371,7 +389,10 @@ export function WalletProvider({ children }: { children: ReactNode }) {
  if (data.user && data.security) applySecurity(data.security, data.user);
  const pk = data.publicKey;
  if (!pk) throw new Error("Wallet not available");
- applyInternalWallet(pk, data.deviceShareHex);
+ applyInternalWallet(pk, data.deviceShareHex, {
+  address: data.evmAddress,
+  deviceShareHex: data.evmDeviceShareHex,
+ });
  const hasShare = !!(data.deviceShareHex || loadDeviceShare(pk));
  return {
  needsRecovery: !hasShare,
@@ -472,7 +493,10 @@ export function WalletProvider({ children }: { children: ReactNode }) {
  if (!data.publicKey || !data.deviceShareHex) {
  throw new Error("Recovery did not return a device share");
  }
- applyInternalWallet(data.publicKey, data.deviceShareHex);
+ applyInternalWallet(data.publicKey, data.deviceShareHex, {
+  address: data.evmAddress,
+  deviceShareHex: data.evmDeviceShareHex,
+ });
  } finally {
  setConnecting(false);
  }

@@ -10,15 +10,13 @@
 
 import { Router, type IRouter, type Request, type Response } from "express";
 import {
- createInternalWallet,
  signWithInternalWallet,
  getInternalWallet,
  exportInternalWalletSecret,
  isRecoveryReady,
+ ensureOrbitWallets,
 } from "../lib/internal-wallet";
 import {
- ensureInternalEvmWallet,
- getInternalEvmWallet,
  signAndSendEvmTx,
 } from "../lib/internal-evm-wallet";
 import { decrypt, deriveUserKey } from "../lib/crypto";
@@ -71,36 +69,33 @@ router.get(
  async (req: Request & { userId?: number }, res): Promise<void> => {
  if (!requireAuth(req, res)) return;
 
- const wallet = await getInternalWallet(req.userId!);
  const recoveryReady = await isRecoveryReady(req.userId!);
  const user = await db.query.usersTable.findFirst({
  where: eq(usersTable.id, req.userId!),
  });
 
- if (!wallet) {
  try {
- const { publicKey, deviceShareHex } = await createInternalWallet(req.userId!);
- res.json({
- publicKey,
- deviceShareHex,
- justCreated: true,
- recoveryReady,
- emailVerified: !!user?.emailVerifiedAt,
- message: "Wallet created. Store deviceShareHex in localStorage.",
- });
+  const wallets = await ensureOrbitWallets(req.userId!);
+  const existing = await getInternalWallet(req.userId!);
+  res.json({
+   publicKey: wallets.publicKey,
+   ...(wallets.deviceShareHex ? { deviceShareHex: wallets.deviceShareHex } : {}),
+   justCreated: wallets.justCreated,
+   recoveryReady,
+   emailVerified: !!user?.emailVerifiedAt,
+   hasRecoveryBlob: !!existing?.encryptedRecoveryShare,
+   evmAddress: wallets.evmAddress,
+   ...(wallets.evmDeviceShareHex
+    ? { evmDeviceShareHex: wallets.evmDeviceShareHex }
+    : {}),
+   ...(wallets.justCreated
+    ? { message: "Wallet created. Store deviceShareHex in localStorage." }
+    : {}),
+  });
  } catch (err) {
- logger.error({ err }, "Failed to create internal wallet");
- res.status(500).json({ error: "Failed to create internal wallet" });
+  logger.error({ err }, "Failed to load Orbit wallets");
+  res.status(500).json({ error: "Failed to create internal wallet" });
  }
- return;
- }
-
- res.json({
- publicKey: wallet.stellarPublicKey,
- recoveryReady,
- emailVerified: !!user?.emailVerifiedAt,
- hasRecoveryBlob: !!wallet.encryptedRecoveryShare,
- });
  }
 );
 
@@ -174,22 +169,17 @@ router.post(
  }
 );
 
-/** Orbit embedded EVM address (created on demand for CCTP bridge-in). */
+/** Orbit embedded EVM address — same account as Stellar; prefer GET /internal-wallet. */
 router.get(
  "/internal-wallet/evm",
  async (req: Request & { userId?: number }, res): Promise<void> => {
   if (!requireAuth(req, res)) return;
   try {
-   const existing = await getInternalEvmWallet(req.userId!);
-   if (existing) {
-    res.json({ address: existing.address, justCreated: false });
-    return;
-   }
-   const created = await ensureInternalEvmWallet(req.userId!);
+   const wallets = await ensureOrbitWallets(req.userId!);
    res.json({
-    address: created.address,
-    deviceShareHex: created.deviceShareHex,
-    justCreated: created.justCreated,
+    address: wallets.evmAddress,
+    deviceShareHex: wallets.evmDeviceShareHex,
+    justCreated: wallets.evmJustCreated,
    });
   } catch (err: unknown) {
    logger.error({ err }, "EVM wallet get/create failed");

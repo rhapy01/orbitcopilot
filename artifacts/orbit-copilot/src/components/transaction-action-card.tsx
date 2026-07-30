@@ -1397,14 +1397,19 @@ export function TransactionActionCard({
   let evmAddr = evmAddress;
   let evmK = evmKind;
   if (!evmAddr || !evmK) {
-   if (hasInjectedProvider) {
+   // Same wallet system: Orbit internal already has EVM; Freighter users use MetaMask for bridge-in
+   if (walletType === "internal") {
+    setProgress("Preparing Orbit wallet…");
+    evmAddr = await ensureOrbitEvm();
+    evmK = "internal";
+   } else if (hasInjectedProvider) {
     setProgress("Connect MetaMask…");
     evmAddr = await connectInjected();
     evmK = "injected";
    } else {
-    setProgress("Creating Orbit EVM key…");
-    evmAddr = await ensureOrbitEvm();
-    evmK = "internal";
+    throw new Error(
+     "Bridge-in needs an EVM wallet. Use Orbit embedded wallet, or install MetaMask alongside Freighter."
+    );
    }
   }
   setStatus("signing");

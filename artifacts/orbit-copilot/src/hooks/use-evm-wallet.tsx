@@ -39,7 +39,7 @@ type EvmWalletState = {
 
 const EVM_SHARE_KEY = "orbit_evm_device_share";
 
-function saveEvmShare(address: string, share: string) {
+export function saveEvmShare(address: string, share: string) {
   try {
     localStorage.setItem(`${EVM_SHARE_KEY}_${address.toLowerCase()}`, share);
   } catch {
@@ -47,11 +47,30 @@ function saveEvmShare(address: string, share: string) {
   }
 }
 
-function loadEvmShare(address: string): string | null {
+export function loadEvmShare(address: string): string | null {
   try {
     return localStorage.getItem(`${EVM_SHARE_KEY}_${address.toLowerCase()}`);
   } catch {
     return null;
+  }
+}
+
+/** Persist Orbit embedded EVM key alongside Stellar (same internal wallet). */
+export function persistInternalEvmSession(
+  address: string,
+  deviceShareHex?: string
+) {
+  try {
+    localStorage.setItem("orbit_evm_address", address);
+    localStorage.setItem("orbit_evm_kind", "internal");
+  } catch {
+    /* ignore */
+  }
+  if (deviceShareHex) saveEvmShare(address, deviceShareHex);
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(
+      new CustomEvent("orbit-evm-synced", { detail: { address, kind: "internal" } })
+    );
   }
 }
 
@@ -129,21 +148,26 @@ export function EvmWalletProvider({ children }: { children: ReactNode }) {
   const [hasInjectedProvider, setHasInjectedProvider] = useState(false);
 
   useEffect(() => {
-    setHasInjectedProvider(Boolean(getEthereum()));
-    // Restore Orbit EVM address if share exists for known address from session
-    try {
-      const saved = localStorage.getItem("orbit_evm_address");
-      const kind = localStorage.getItem("orbit_evm_kind") as EvmWalletKind;
-      if (saved && kind === "internal" && loadEvmShare(saved)) {
-        setEvmAddress(saved);
-        setEvmKind("internal");
-      } else if (saved && kind === "injected") {
-        setEvmAddress(saved);
-        setEvmKind("injected");
+    const restore = () => {
+      setHasInjectedProvider(Boolean(getEthereum()));
+      try {
+        const saved = localStorage.getItem("orbit_evm_address");
+        const kind = localStorage.getItem("orbit_evm_kind") as EvmWalletKind;
+        if (saved && kind === "internal" && loadEvmShare(saved)) {
+          setEvmAddress(saved);
+          setEvmKind("internal");
+        } else if (saved && kind === "injected") {
+          setEvmAddress(saved);
+          setEvmKind("injected");
+        }
+      } catch {
+        /* ignore */
       }
-    } catch {
-      /* ignore */
-    }
+    };
+    restore();
+    const onSync = () => restore();
+    window.addEventListener("orbit-evm-synced", onSync);
+    return () => window.removeEventListener("orbit-evm-synced", onSync);
   }, []);
 
   const persist = useCallback((address: string, kind: EvmWalletKind) => {
@@ -194,7 +218,7 @@ export function EvmWalletProvider({ children }: { children: ReactNode }) {
         throw new Error(
           typeof data?.error === "string"
             ? data.error
-            : "Sign in to Orbit (email/passkey) first to create an EVM key"
+            : "Sign in to Orbit (email/passkey) first"
         );
       }
       const address = String(data.address);
@@ -203,7 +227,7 @@ export function EvmWalletProvider({ children }: { children: ReactNode }) {
       }
       if (!loadEvmShare(address)) {
         throw new Error(
-          "Orbit EVM device share missing on this browser — create/reconnect after login"
+          "Orbit wallet device share missing on this browser — recover this device (email + authenticator)"
         );
       }
       persist(address, "internal");
