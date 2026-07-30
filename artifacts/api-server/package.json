@@ -8,13 +8,16 @@
     "build": "node ./build.mjs",
     "start": "node --enable-source-maps ./dist/index.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:smoke": "node --test scripts/smoke-intents.mjs scripts/smoke-knowledge.mjs scripts/smoke-network.mjs",
+    "test:smoke": "node --test scripts/smoke-intents.mjs scripts/smoke-knowledge.mjs scripts/smoke-network.mjs scripts/smoke-mcp.mjs scripts/smoke-mcp-apps.mjs",
+    "test:smoke:mcp-apps": "node --test scripts/smoke-mcp-apps.mjs scripts/smoke-mcp-apps-dist.mjs",
     "db:sync": "node scripts/sync-db.mjs",
     "test:smoke:live": "node scripts/smoke-live.mjs",
     "predict:seed-sports": "node scripts/seed-predict-sports.mjs",
     "predict:resolve": "node scripts/resolve-predict.mjs"
   },
   "dependencies": {
+    "@modelcontextprotocol/ext-apps": "^1.7.5",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@simplewebauthn/server": "^10.0.0",
     "@stellar/stellar-sdk": "^16.0.1",
     "@workspace/api-zod": "workspace:*",
@@ -28,7 +31,8 @@
     "nodemailer": "^6.10.1",
     "otplib": "^12.0.1",
     "pino": "^9.14.0",
-    "pino-http": "^10.5.0"
+    "pino-http": "^10.5.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/cookie-parser": "^1.4.10",

@@ -28,13 +28,14 @@ import {
  Eye,
  EyeOff,
 } from "lucide-react";
+import { McpKeysPanel } from "@/components/auth/mcp-keys-panel";
 
 interface SecuritySettingsProps {
  open: boolean;
  onOpenChange: (open: boolean) => void;
 }
 
-type Tab = "overview" | "email" | "passkey" | "totp" | "export";
+type Tab = "overview" | "email" | "passkey" | "totp" | "export" | "mcp";
 
 export function SecuritySettings({ open, onOpenChange }: SecuritySettingsProps) {
  const wallet = useWallet();
@@ -68,6 +69,7 @@ export function SecuritySettings({ open, onOpenChange }: SecuritySettingsProps) 
  { id: "email", label: "Email" },
  { id: "passkey", label: "Passkeys" },
  { id: "totp", label: "Authenticator" },
+ { id: "mcp", label: "MCP" },
  { id: "export", label: "Export" },
  ];
 
@@ -335,6 +337,10 @@ export function SecuritySettings({ open, onOpenChange }: SecuritySettingsProps) 
  </>
  )}
  </div>
+ )}
+
+ {tab === "mcp" && (
+ <McpKeysPanel publicKey={wallet.publicKey} />
  )}
 
  {tab === "export" && (

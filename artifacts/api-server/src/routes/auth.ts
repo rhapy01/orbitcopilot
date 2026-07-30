@@ -52,12 +52,17 @@ async function withEvmWalletFields(
 const router: IRouter = Router();
 
 function sessionCookieOpts() {
+ // SameSite=None so Orbit session works inside ChatGPT/Claude MCP App iframes.
+ const secure =
+  process.env.NODE_ENV === "production" || process.env.VERCEL === "1";
  return {
- httpOnly: true,
- secure: process.env.NODE_ENV === "production" || process.env.VERCEL === "1",
- sameSite: "lax" as const,
- maxAge: SESSION_TTL_MS,
- path: "/",
+  httpOnly: true,
+  secure,
+  sameSite: (secure ? "none" : "lax") as "none" | "lax",
+  maxAge: SESSION_TTL_MS,
+  path: "/",
+  // CHIPS: keep cookie in the embed's partitioned jar when third-party
+  ...(secure ? { partitioned: true } : {}),
  };
 }
 

@@ -12,6 +12,8 @@ import ChatPage from "@/pages/chat";
 
 const StatsPage = lazy(() => import("@/pages/stats"));
 const SettingsPage = lazy(() => import("@/pages/settings"));
+const ApprovePage = lazy(() => import("@/pages/approve"));
+const EmbedApprovePage = lazy(() => import("@/pages/embed-approve"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -41,6 +43,8 @@ function Router() {
         <Route path="/" component={ChatPage} />
         <Route path="/stats" component={StatsPage} />
         <Route path="/settings" component={SettingsPage} />
+        <Route path="/embed/approve/:id" component={EmbedApprovePage} />
+        <Route path="/approve/:id" component={ApprovePage} />
         <Route component={ChatPage} />
       </Switch>
     </Suspense>

@@ -122,3 +122,58 @@ export const webauthnChallengesTable = pgTable("webauthn_challenges", {
 });
 
 export type WebauthnChallenge = typeof webauthnChallengesTable.$inferSelect;
+
+// ─── MCP API keys (ChatGPT / Claude connectors — never grant sign) ────────────
+
+/**
+ * Bearer tokens for remote MCP hosts. Scopes are read | prepare only.
+ * Signing / export / submit stay out of MCP forever.
+ */
+export const mcpApiKeysTable = pgTable("mcp_api_keys", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  /** HMAC hash of the raw key (same as sessions). */
+  tokenHash: text("token_hash").notNull().unique(),
+  /** Public prefix shown in UI, e.g. orb_mcp_ab12… */
+  keyPrefix: text("key_prefix").notNull(),
+  label: text("label").notNull().default("MCP connector"),
+  /** JSON string array: "read" | "prepare" */
+  scopes: jsonb("scopes").$type<string[]>().notNull().default(["read"]),
+  /**
+   * Optional G… wallet this key may query/prepare for.
+   * When set, tools must use this public key only.
+   */
+  bindPublicKey: text("bind_public_key"),
+  lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  expiresAt: timestamp("expires_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type McpApiKey = typeof mcpApiKeysTable.$inferSelect;
+
+/**
+ * Pending MCP actions: prepared in ChatGPT/Claude, completed in Orbit browser
+ * (device share / Freighter). Never signed by the AI host.
+ */
+export const mcpPendingActionsTable = pgTable("mcp_pending_actions", {
+  id: serial("id").primaryKey(),
+  /** Opaque token in approval URL */
+  publicId: text("public_id").notNull().unique(),
+  userId: integer("user_id"),
+  walletPublicKey: text("wallet_public_key").notNull(),
+  /** ChatAction JSON */
+  action: jsonb("action").$type<Record<string, unknown>>().notNull(),
+  /** Human summary for MCP / UI */
+  summary: text("summary").notNull().default(""),
+  /** pending | completed | failed | expired | cancelled */
+  status: text("status").notNull().default("pending"),
+  txHash: text("tx_hash"),
+  error: text("error"),
+  intentText: text("intent_text"),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type McpPendingAction = typeof mcpPendingActionsTable.$inferSelect;

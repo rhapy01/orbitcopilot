@@ -148,6 +148,51 @@ await run(
 `
 );
 
+await run(
+  "mcp api keys",
+  `
+  CREATE TABLE IF NOT EXISTS mcp_api_keys (
+    id serial PRIMARY KEY,
+    user_id integer NOT NULL,
+    token_hash text NOT NULL UNIQUE,
+    key_prefix text NOT NULL,
+    label text NOT NULL DEFAULT 'MCP connector',
+    scopes jsonb NOT NULL DEFAULT '["read"]'::jsonb,
+    bind_public_key text,
+    last_used_at timestamptz,
+    revoked_at timestamptz,
+    expires_at timestamptz,
+    created_at timestamptz NOT NULL DEFAULT now()
+  );
+  CREATE INDEX IF NOT EXISTS mcp_api_keys_user_idx ON mcp_api_keys (user_id);
+  CREATE INDEX IF NOT EXISTS mcp_api_keys_active_idx ON mcp_api_keys (token_hash)
+    WHERE revoked_at IS NULL;
+`
+);
+
+await run(
+  "mcp pending actions",
+  `
+  CREATE TABLE IF NOT EXISTS mcp_pending_actions (
+    id serial PRIMARY KEY,
+    public_id text NOT NULL UNIQUE,
+    user_id integer,
+    wallet_public_key text NOT NULL,
+    action jsonb NOT NULL,
+    summary text NOT NULL DEFAULT '',
+    status text NOT NULL DEFAULT 'pending',
+    tx_hash text,
+    error text,
+    intent_text text,
+    expires_at timestamptz NOT NULL,
+    completed_at timestamptz,
+    created_at timestamptz NOT NULL DEFAULT now()
+  );
+  CREATE INDEX IF NOT EXISTS mcp_pending_actions_user_idx ON mcp_pending_actions (user_id);
+  CREATE INDEX IF NOT EXISTS mcp_pending_actions_wallet_idx ON mcp_pending_actions (wallet_public_key);
+`
+);
+
 const tables = await client.query(`
   SELECT tablename
   FROM pg_tables

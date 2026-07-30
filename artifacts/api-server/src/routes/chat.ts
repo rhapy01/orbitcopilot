@@ -3163,9 +3163,11 @@ async function getDeterministicResponse(
  lower.includes("what's earning") ||
  lower.includes("what is earning") ||
  lower.includes("whats earning") ||
+ /\bwhat\s+s\s+earning\b/.test(lower) ||
  lower.includes("not earning") ||
  lower.includes("what's idle") ||
  lower.includes("what is idle") ||
+ /\bwhat\s+s\s+idle\b/.test(lower) ||
  lower.includes("idle capital") ||
  (lower.includes("earning") && (lower.includes("idle") || lower.includes("vs")))
  ) {
@@ -3304,6 +3306,53 @@ function isGenericReply(text: string): boolean {
  return text === AI_RESPONSES.default || text === CAPABILITIES_TEXT;
 }
 
+/** Balance / portfolio / earning reads — answer without waiting on the LLM. */
+function isWalletReadQuery(text: string): boolean {
+ const lower = text.toLowerCase();
+ return (
+ /\b(balance|balances|portfolio|earning|idle|rebalance|holdings?)\b/.test(lower) ||
+ /\b(?:what|show|list)(?:'s|s| is)\s+(?:my\s+)?(?:asset\s+)?(?:balance|earning|idle)/.test(
+ lower
+ ) ||
+ /\bwhat\s+(?:are|is)\s+my\s+(?:assets?|balances?|tokens?)\b/.test(lower) ||
+ /\bwhat\s+s\s+(?:my\s+)?(?:balance|earning|idle)\b/.test(lower)
+ );
+}
+
+async function tryFastWalletReadResponse(
+ content: string,
+ publicKey: string | null,
+ sessionId?: number
+): Promise<ChatReply | null> {
+ if (!isWalletReadQuery(content)) return null;
+
+ const deterministic = await getDeterministicResponse(content, publicKey, {
+ readQueries: true,
+ sessionId,
+ });
+ if (deterministic.action || deterministic.actions?.length || deterministic.gallery) {
+ return deterministic;
+ }
+ if (deterministic.text && !isGenericReply(deterministic.text)) {
+ return deterministic;
+ }
+
+ if (publicKey) {
+ try {
+ const wallet = await answerWalletQueryFromMessage(publicKey, content);
+ if (wallet) return { text: wallet, action: null };
+ } catch {
+ // fall through
+ }
+ }
+
+ if (!publicKey) {
+ return { text: AI_RESPONSES.connectWallet, action: null };
+ }
+
+ return null;
+}
+
 async function getAiResponse(
  content: string,
  publicKey: string | null,
@@ -3349,6 +3398,10 @@ async function getAiResponse(
  return actionPass;
  }
  }
+
+ // 1.2) Fast wallet reads — balance / earning / portfolio (skip slow LLM)
+ const fastRead = await tryFastWalletReadResponse(normalized, publicKey, opts?.sessionId);
+ if (fastRead) return fastRead;
 
  // 1.25) Live Blend health for connected wallets
  if (
@@ -3622,12 +3675,14 @@ router.post("/chat/messages", async (req, res): Promise<void> => {
  );
  const aiContent = aiContentRaw?.trim() || "Sorry — I couldn't finish that reply. Please try again.";
 
- // Stream text in ~40-char chunks for a typing effect
- const chunkSize = 40;
+ // Stream text — single burst for long replies (no artificial typing delay)
+ if (aiContent.length > 800) {
+ sendEvent({ type: "delta", text: aiContent });
+ } else {
+ const chunkSize = 120;
  for (let i = 0; i < aiContent.length; i += chunkSize) {
  sendEvent({ type: "delta", text: aiContent.slice(i, i + chunkSize) });
- // Small yield to allow flush
- await new Promise((r) => setTimeout(r, 8));
+ }
  }
 
  const meta: Record<string, unknown> = {};
@@ -3800,5 +3855,14 @@ router.post("/chat/clear", async (req, res): Promise<void> => {
  });
  }
 });
+
+/** Shared entry for MCP / other callers — same routing as chat. */
+export async function runOrbitIntent(
+  content: string,
+  publicKey: string | null,
+  opts?: { sessionId?: number },
+) {
+  return getAiResponse(content, publicKey, opts);
+}
 
 export default router;

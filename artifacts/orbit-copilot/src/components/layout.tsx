@@ -159,6 +159,35 @@ export function Layout({
  };
  }, [isMobile, sidebarOpen]);
 
+ // PayBox-style MCP OAuth return: after Orbit login, resume authorize
+ useEffect(() => {
+ const params = new URLSearchParams(window.location.search);
+ const mcpReturn = params.get("mcp_return");
+ if (!mcpReturn) return;
+
+ if (!isConnected || walletType !== "internal") {
+ openConnectModal();
+ return;
+ }
+
+ try {
+ const target = new URL(mcpReturn, window.location.origin);
+ const allowedOrigins = new Set([
+  window.location.origin,
+  "https://orbitpilot.vercel.app",
+ ]);
+ if (!allowedOrigins.has(target.origin)) {
+  return;
+ }
+ if (!target.pathname.startsWith("/authorize")) {
+  return;
+ }
+ window.location.assign(target.toString());
+ } catch {
+ /* ignore bad return URLs */
+ }
+ }, [isConnected, walletType, openConnectModal]);
+
  const runSidebarAction = useCallback(
  (action: SidebarAction) => {
  if (action.type === "open-portfolio") {

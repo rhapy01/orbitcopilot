@@ -4,15 +4,67 @@
   "buildCommand": "corepack pnpm --filter @workspace/api-server run build && corepack pnpm --filter @workspace/orbit-copilot run build",
   "outputDirectory": "artifacts/orbit-copilot/dist/public",
   "framework": null,
+  "headers": [
+    {
+      "source": "/embed/(.*)",
+      "headers": [
+        {
+          "key": "Content-Security-Policy",
+          "value": "frame-ancestors 'self' https://chatgpt.com https://chat.openai.com https://claude.ai https://www.claude.ai https://*.oaiusercontent.com https://*.claudemcpcontent.com https://*.mcp.claude.com"
+        },
+        {
+          "key": "Permissions-Policy",
+          "value": "publickey-credentials-get=*, publickey-credentials-create=*, clipboard-write=*"
+        }
+      ]
+    },
+    {
+      "source": "/approve/(.*)",
+      "headers": [
+        {
+          "key": "Content-Security-Policy",
+          "value": "frame-ancestors 'self' https://chatgpt.com https://chat.openai.com https://claude.ai https://www.claude.ai https://*.oaiusercontent.com https://*.claudemcpcontent.com https://*.mcp.claude.com"
+        }
+      ]
+    }
+  ],
   "rewrites": [
+    { "source": "/mcp", "destination": "/api/mcp" },
+    { "source": "/mcp/(.*)", "destination": "/api/mcp" },
+    { "source": "/authorize", "destination": "/api" },
+    { "source": "/authorize/(.*)", "destination": "/api" },
+    { "source": "/token", "destination": "/api" },
+    { "source": "/register", "destination": "/api" },
+    { "source": "/revoke", "destination": "/api" },
+    {
+      "source": "/.well-known/oauth-protected-resource",
+      "destination": "/api"
+    },
+    {
+      "source": "/.well-known/oauth-protected-resource/(.*)",
+      "destination": "/api"
+    },
+    {
+      "source": "/.well-known/oauth-authorization-server",
+      "destination": "/api"
+    },
+    {
+      "source": "/.well-known/openid-configuration",
+      "destination": "/api"
+    },
     { "source": "/api/(.*)", "destination": "/api" },
     {
-      "source": "/((?!api/|.*\\.(?:js|css|map|svg|png|jpg|jpeg|gif|webp|ico|woff2?|ttf|mp4|json|txt|webmanifest)).*)",
+      "source": "/((?!api/|mcp|\\.well-known/|.*\\.(?:js|css|map|svg|png|jpg|jpeg|gif|webp|ico|woff2?|ttf|mp4|json|txt|webmanifest)).*)",
       "destination": "/index.html"
     }
   ],
   "functions": {
     "api/index.mjs": {
+      "maxDuration": 60,
+      "memory": 1024,
+      "includeFiles": "{artifacts/api-server/dist/**,api/**}"
+    },
+    "api/mcp.mjs": {
       "maxDuration": 60,
       "memory": 1024,
       "includeFiles": "{artifacts/api-server/dist/**,api/**}"
